@@ -1,0 +1,30 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.privacyclone.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.privacyclone.app'
+        minSdk 26
+        // API 27 keeps the first release focused on Android 8.0/8.1 compatibility.
+        // Raise this before any Play Store publication and re-test provisioning behavior.
+        targetSdk 27
+        versionCode 3
+        versionName '0.3.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
