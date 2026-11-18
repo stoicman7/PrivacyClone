@@ -10,6 +10,8 @@ This branch adds the Apache-2.0-licensed ISEKHON/VirtualApp project as the `engi
 
 ## Build
 
+The trial workflow uses the current Android command-line-tools setup action and installs the required SDK/NDK packages explicitly.
+
 Open GitHub Actions and run **Build experimental PrivacyClone virtual engine**, or push another commit to this branch. The workflow checks out the pinned submodule revision, changes the host application ID to `com.privacyclone.probe`, changes the displayed app name, and builds APKs for the supported ABIs.
 
 ## Important test status
