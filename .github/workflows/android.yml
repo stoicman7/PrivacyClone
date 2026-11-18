@@ -98,7 +98,11 @@ jobs:
               "        context.startService(new Intent(context, DaemonService.class));",
               "        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {\n"
               "            ensureNotificationChannel(context);\n"
-              "            context.startForegroundService(new Intent(context, DaemonService.class));\n"
+              "            if (showNotification) {\n"
+              "                context.startForegroundService(new Intent(context, DaemonService.class));\n"
+              "            } else {\n"
+              "                context.startService(new Intent(context, DaemonService.class));\n"
+              "            }\n"
               "        } else {\n"
               "            context.startService(new Intent(context, DaemonService.class));\n"
               "        }",
@@ -106,6 +110,11 @@ jobs:
           )
           daemon_text = daemon_text.replace(required_source,
               "startForeground(NOTIFY_ID, buildForegroundNotification(this));")
+          # The main service itself is the persistent foreground service. Starting
+          # InnerService with the same notification ID can immediately remove the
+          # notification while leaving the server process in an inconsistent state.
+          daemon_text = daemon_text.replace(
+              "        startService(new Intent(this, InnerService.class));\n", "")
           helper = """
           private static void ensureNotificationChannel(Context context) {
               if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
