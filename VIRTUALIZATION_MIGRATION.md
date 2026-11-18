@@ -7,7 +7,7 @@ This branch replaces Android Work Profile / DevicePolicyManager cloning with an 
 - Upstream: https://github.com/android-hacker/VirtualXposed
 - Pinned source revision: 122beb371519cb2d221ce06756361aaa30e2674f (VirtualXposed 0.22.0)
 - Gradle module: vendor/VirtualXposed/VirtualApp/lib
-- Native ABIs declared by the upstream library: arm64-v8a and x86_64
+- Native ABIs declared by the upstream library: arm64-v8a and x86_64; the selected Huawei runtime ABI must be verified in the app diagnostics
 - The upstream README describes Android 5.0–10.0 support. Android 8.1 falls within that published range, but individual apps and vendor firmware still need real-device testing.
 
 ## Implemented in this branch
@@ -24,6 +24,18 @@ This branch replaces Android Work Profile / DevicePolicyManager cloning with an 
 - Removed Work Profile provisioning and the device-admin receiver from the app manifest.
 - GitHub Actions checks out the engine submodule, installs the NDK, enables AIDL source generation, and supplies Android 8.1 hidden framework API signatures through a compile-only Robolectric framework JAR.
 - CI removes the obsolete commented-out IJobScheduler AIDL file because the equivalent Java Binder interface is already present, and patches one reflection wrapper from List<?> to raw List for Java compiler compatibility.
+
+## Android 8 foreground-server compatibility fix
+
+The pinned VirtualApp 0.22 source starts its `:x` server keep-alive service with `new Notification()`. PrivacyClone targets API 27, while Android 8 requires notifications to be assigned to a registered notification channel for apps targeting API 26 or later. The original foreground-service notification also has no small icon. On Android 8.x this can cause the server process that hosts VirtualApp's Binder provider to fail, leaving the client with a dead Binder/server error.
+
+The GitHub Actions preparation step now patches the upstream `DaemonService` in the build checkout to:
+- Create a low-importance notification channel before starting the server service.
+- Start the service with `startForegroundService()` on Android 8+.
+- Promote the main daemon service immediately with a valid channel-backed notification and system small icon.
+- Avoid the legacy `InnerService` notification-removal pattern, which reuses the same notification ID and can remove the server's foreground notification.
+
+This is a targeted compatibility patch to the pinned upstream source. The submodule commit itself is not altered; the patch is applied by the versioned CI workflow. The app's diagnostics also show the actual process bitness, supported ABIs, and whether the packaged `libva++.so` is present. Clone failures report the stage and exception message to make any remaining device-specific crash diagnosable.
 
 ## Important limitations
 
@@ -58,6 +70,6 @@ VirtualXposed's upstream repository identifies GPL-3.0 and its README explicitly
 - [x] Installed-app import stages complete split APK sets (base + configuration/feature splits) for VirtualApp's PackageParser cluster parser.
 - [x] CI updated to fetch the submodule and native NDK.
 - [x] GitHub Actions debug build verified successfully (run #43, commit 18c4118; artifact uploaded).
-- [ ] Install and test on the actual ARM64 Android 8.1 Huawei phone.
+- [ ] Install and test on the actual Huawei Android 8.1 phone; verify the reported process bitness and native library presence.
 - [ ] Verify separate data and login sessions across two clones of the same package.
 - [ ] Verify runtime permission behavior, notifications, reboot persistence, and background launch.
