@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.PermissionInfo;
 import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
@@ -58,6 +59,7 @@ import com.lody.virtual.remote.InstalledAppInfo;
  */
 public final class PrivacyCloneActivity extends Activity {
     private static final int REQUEST_IMPORT_APK = 4201;
+    private static final int REQUEST_CLONE_PERMISSIONS = 4202;
     private static final int BG = Color.rgb(11, 13, 16);
     private static final int PANEL = Color.rgb(22, 25, 30);
     private static final int PANEL_ALT = Color.rgb(29, 33, 39);
@@ -79,6 +81,7 @@ public final class PrivacyCloneActivity extends Activity {
     private TextView permissionCountValue;
     private TextView vpnValue;
     private TextView sensorValue;
+    private AppEntry pendingCloneLaunch;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -98,6 +101,16 @@ public final class PrivacyCloneActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_IMPORT_APK && resultCode == RESULT_OK && data != null && data.getData() != null) {
             importApkFromUri(data.getData());
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CLONE_PERMISSIONS && pendingCloneLaunch != null) {
+            AppEntry entry = pendingCloneLaunch;
+            pendingCloneLaunch = null;
+            launchCloneNow(entry);
         }
     }
 
@@ -164,7 +177,7 @@ public final class PrivacyCloneActivity extends Activity {
         LinearLayout card = card();
         sectionTitle(card, "CLONE MANAGER", "Import installed apps or APK files into this phone's virtual container");
 
-        TextView note = text("Each clone is placed in its own virtual user with a separate app-data directory. This does not create an Android Work Profile or a separate operating-system security boundary. Some apps, especially split-APK apps and apps that depend on Google Play services, may not work.", 12, MUTED, false);
+        TextView note = text("Each clone is placed in its own virtual user with a separate app-data directory. This is not an Android Work Profile or an OS security boundary. Runtime permissions are currently granted to the PrivacyClone host and may be shared across clones. Some split-APK apps and apps that depend on Google Play services may not work.", 12, MUTED, false);
         LinearLayout.LayoutParams noteParams = params(-1, -2);
         noteParams.topMargin = dp(12);
         card.addView(note, noteParams);
@@ -535,6 +548,58 @@ public final class PrivacyCloneActivity extends Activity {
     }
 
     private void openClone(AppEntry entry) {
+        List<String> missing = getMissingClonePermissions(entry);
+        if (missing.isEmpty()) {
+            launchCloneNow(entry);
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Permissions requested by this clone")
+                .setMessage("The cloned app requests: " + join(missing) + ". Android will grant these permissions to PrivacyClone, which hosts the virtual apps. These grants are not isolated per clone in this prototype and may be shared by other clones. You can skip this and try launching with those permissions denied.")
+                .setNegativeButton("SKIP", (dialog, which) -> launchCloneNow(entry))
+                .setPositiveButton("CONTINUE", (dialog, which) -> {
+                    pendingCloneLaunch = entry;
+                    requestPermissions(missing.toArray(new String[0]), REQUEST_CLONE_PERMISSIONS);
+                })
+                .show();
+    }
+
+    private List<String> getMissingClonePermissions(AppEntry entry) {
+        List<String> missing = new ArrayList<>();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return missing;
+        try {
+            InstalledAppInfo installed = VirtualCore.get().getInstalledAppInfo(entry.packageName, 0);
+            if (installed == null) return missing;
+            PackageInfo virtualPackage = installed.getPackageInfo(entry.userId);
+            if (virtualPackage == null || virtualPackage.requestedPermissions == null) return missing;
+
+            PackageInfo hostPackage = getPackageManager().getPackageInfo(getPackageName(), PackageManager.GET_PERMISSIONS);
+            Set<String> hostDeclared = new HashSet<>();
+            if (hostPackage.requestedPermissions != null) {
+                hostDeclared.addAll(Arrays.asList(hostPackage.requestedPermissions));
+            }
+
+            for (String permission : virtualPackage.requestedPermissions) {
+                if (!hostDeclared.contains(permission) || checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
+                    continue;
+                }
+                try {
+                    PermissionInfo permissionInfo = getPackageManager().getPermissionInfo(permission, 0);
+                    int protection = permissionInfo.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE;
+                    if (protection == PermissionInfo.PROTECTION_DANGEROUS && !missing.contains(permission)) {
+                        missing.add(permission);
+                    }
+                } catch (PackageManager.NameNotFoundException ignored) {
+                    // Custom permissions are not requested through Android's runtime dialog.
+                }
+            }
+        } catch (Exception ignored) {
+            // Permission discovery must not prevent the user from launching the clone.
+        }
+        return missing;
+    }
+
+    private void launchCloneNow(AppEntry entry) {
         try {
             Intent launch = VirtualCore.get().getLaunchIntent(entry.packageName, entry.userId);
             if (launch == null) {
