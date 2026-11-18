@@ -19,6 +19,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.AsyncTask;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
@@ -83,18 +85,47 @@ public final class PrivacyCloneActivity extends Activity {
     private TextView vpnValue;
     private TextView sensorValue;
     private AppEntry pendingCloneLaunch;
+    private final Handler startupHandler = new Handler(Looper.getMainLooper());
+    private final Runnable startupRefresh = new Runnable() {
+        @Override
+        public void run() {
+            if (isFinishing()) return;
+            refreshProfileStatus();
+            if (PrivacyCloneApplication.isReady()) {
+                refreshInstalledApps();
+            } else if (PrivacyCloneApplication.isStartupPending()) {
+                startupHandler.postDelayed(this, 250L);
+            } else {
+                refreshInstalledApps();
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildInterface();
         refreshAll();
+        if (PrivacyCloneApplication.isStartupPending()) {
+            startupHandler.postDelayed(startupRefresh, 250L);
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (content != null) refreshAll();
+        if (content != null) {
+            refreshAll();
+            if (PrivacyCloneApplication.isStartupPending()) {
+                startupHandler.postDelayed(startupRefresh, 250L);
+            }
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        startupHandler.removeCallbacks(startupRefresh);
+        super.onDestroy();
     }
 
     @Override
@@ -383,6 +414,10 @@ public final class PrivacyCloneActivity extends Activity {
             profileStatus.setText("Virtual container initialized");
             profileStatus.setTextColor(GREEN);
             profileDetails.setText("Clones run inside PrivacyClone. Each clone gets a separate virtual user and app-data directory; no Android Work Profile is created.");
+        } else if (PrivacyCloneApplication.isStartupPending()) {
+            profileStatus.setText("Starting virtual container…");
+            profileStatus.setTextColor(AMBER);
+            profileDetails.setText("Starting the VirtualApp server and checking its Binder connection.");
         } else {
             profileStatus.setText("Virtual container unavailable");
             profileStatus.setTextColor(AMBER);
@@ -395,7 +430,9 @@ public final class PrivacyCloneActivity extends Activity {
 
     private void cloneInstalledApp() {
         if (!PrivacyCloneApplication.isReady()) {
-            toast("The virtual container is not ready. Check the status above and restart the app.");
+            toast(PrivacyCloneApplication.isStartupPending()
+                    ? "The virtual container is still starting. Try again in a moment."
+                    : "The virtual container is not ready. Check the status above.");
             return;
         }
         String packageName = packageInput.getText().toString().trim();
@@ -597,6 +634,10 @@ public final class PrivacyCloneActivity extends Activity {
             @Override
             protected CloneTaskResult doInBackground(Void... ignored) {
                 try {
+                    if (!PrivacyCloneApplication.ensureServerReady()) {
+                        return CloneTaskResult.failure("VirtualApp server unavailable: "
+                                + String.valueOf(PrivacyCloneApplication.getStartupError()));
+                    }
                     VirtualCore core = VirtualCore.get();
                     String packageName = packageNameHint;
                     if (packageName == null) {
@@ -763,8 +804,13 @@ public final class PrivacyCloneActivity extends Activity {
         if (installedAppsContainer == null) return;
         installedAppsContainer.removeAllViews();
         if (!PrivacyCloneApplication.isReady()) {
-            appCountValue.setText("Virtual container unavailable");
-            addMutedLine(installedAppsContainer, "Cloning is disabled until the virtual engine starts successfully.");
+            if (PrivacyCloneApplication.isStartupPending()) {
+                appCountValue.setText("Starting virtual container…");
+                addMutedLine(installedAppsContainer, "Waiting for the VirtualApp server to respond.");
+            } else {
+                appCountValue.setText("Virtual container unavailable");
+                addMutedLine(installedAppsContainer, "Cloning is disabled until the virtual engine starts successfully.");
+            }
             return;
         }
         List<AppEntry> entries = loadCloneEntries();
