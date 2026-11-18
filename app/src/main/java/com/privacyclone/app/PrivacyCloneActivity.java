@@ -178,7 +178,7 @@ public final class PrivacyCloneActivity extends Activity {
         LinearLayout card = card();
         sectionTitle(card, "CLONE MANAGER", "Import installed apps or APK files into this phone's virtual container");
 
-        TextView note = text("Each clone is placed in its own virtual user with a separate app-data directory. This is not an Android Work Profile or an OS security boundary. Runtime permissions are currently granted to the PrivacyClone host and may be shared across clones. Some split-APK apps and apps that depend on Google Play services may not work.", 12, MUTED, false);
+        TextView note = text("Each clone is placed in its own virtual user with a separate app-data directory. Installed apps are imported with their base APK and available configuration or feature splits. This is not an Android Work Profile or an OS security boundary. Runtime permissions are currently granted to the PrivacyClone host and may be shared across clones. Apps that depend on Google Play services or newer Android APIs may still have compatibility limits.", 12, MUTED, false);
         LinearLayout.LayoutParams noteParams = params(-1, -2);
         noteParams.topMargin = dp(12);
         card.addView(note, noteParams);
@@ -630,6 +630,12 @@ public final class PrivacyCloneActivity extends Activity {
 
             @Override
             protected void onPostExecute(CloneTaskResult result) {
+                File stagedRoot = new File(getFilesDir(), "installed-apk-sets");
+                File stagedSet = new File(apkPath);
+                if (packageNameHint != null && stagedSet.isDirectory()
+                        && stagedSet.getAbsolutePath().startsWith(stagedRoot.getAbsolutePath() + File.separator)) {
+                    deleteRecursively(stagedSet);
+                }
                 if (result == null || result.entry == null) {
                     toast(result == null ? "Import failed." : result.message);
                     refreshInstalledApps();
