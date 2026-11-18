@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Network state is read locally. The app deliberately has no INTERNET permission. -->
+    <!-- Network access is required by the virtual-app engine for apps the user chooses to clone.
+         PrivacyClone itself does not upload diagnostics or use analytics. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
+        android:name=".PrivacyCloneApplication"
         android:allowBackup="false"
         android:icon="@drawable/ic_privacyclone"
         android:roundIcon="@drawable/ic_privacyclone"
@@ -22,19 +24,6 @@
             </intent-filter>
         </activity>
 
-        <receiver
-            android:name=".PrivacyDeviceAdminReceiver"
-            android:description="@string/device_admin_description"
-            android:exported="true"
-            android:label="PrivacyClone profile controller"
-            android:permission="android.permission.BIND_DEVICE_ADMIN">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
-            </intent-filter>
-        </receiver>
+
     </application>
 </manifest>
