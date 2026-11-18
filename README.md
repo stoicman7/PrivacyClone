@@ -22,7 +22,7 @@ This is an experimental migration branch. It is not yet a verified release. The 
 - This first version accepts single-file APKs. Apps installed as multiple split APK files are rejected by the installed-app import path.
 - Apps that depend on Google Play services, Play Integrity, DRM, vendor frameworks, special native code, or newer Android APIs may fail to install or launch.
 - A virtual user is not an Android OS user. It does not create a separate kernel UID, SELinux domain, hardware device, or network connection. Treat this as an app-data container, not a security boundary against a hostile app.
-- The current prototype does not promise per-clone runtime-permission isolation, device-ID spoofing, IP separation, or undetectability. Cloned apps can still identify the physical device and may detect virtualization.
+- Before launching a clone, PrivacyClone can request dangerous runtime permissions declared by that app. Android grants these to the PrivacyClone host package; they are not isolated per clone in this prototype and may be shared by other clones. Special permissions and app-specific service behavior are not fully mediated. The current prototype does not promise per-clone runtime-permission isolation, device-ID spoofing, IP separation, or undetectability. Cloned apps can still identify the physical device and may detect virtualization.
 
 ## Permission and network disclosure
 
