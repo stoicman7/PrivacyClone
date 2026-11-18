@@ -39,10 +39,23 @@ jobs:
           from pathlib import Path
           path = Path("vendor/VirtualXposed/VirtualApp/lib/build.gradle")
           text = path.read_text()
+
+          android_lines = []
           if "namespace " not in text:
-              text = text.replace("android {", "android {\n    namespace 'com.lody.virtual'\n    ndkVersion '21.4.7075529'", 1)
-          elif "ndkVersion " not in text:
-              text = text.replace("android {", "android {\n    ndkVersion '21.4.7075529'", 1)
+              android_lines.append("    namespace 'com.lody.virtual'")
+          if "ndkVersion " not in text:
+              android_lines.append("    ndkVersion '21.4.7075529'")
+          if "buildFeatures" not in text:
+              android_lines.extend(["    buildFeatures {", "        aidl true", "    }"])
+          if android_lines:
+              text = text.replace("android {", "android {\\n" + "\\n".join(android_lines), 1)
+
+          if "org.robolectric:android-all" not in text:
+              text = text.replace(
+                  "dependencies {",
+                  "dependencies {\\n    compileOnly 'org.robolectric:android-all:8.1.0-robolectric-4611349'",
+                  1
+              )
           path.write_text(text)
           PY
 
