@@ -57,6 +57,29 @@ jobs:
                   1
               )
           path.write_text(text)
+
+          # The pinned upstream tree has this interface fully commented out,
+          # although VJobSchedulerService and VJobScheduler still use it.
+          job_aidl = Path("vendor/VirtualXposed/VirtualApp/lib/src/main/aidl/com/lody/virtual/server/IJobScheduler.aidl")
+          active_source = "\\n".join(
+              line for line in job_aidl.read_text().splitlines()
+              if not line.lstrip().startswith("//")
+          )
+          if "interface IJobScheduler" not in active_source:
+              job_aidl.write_text("""package com.lody.virtual.server;
+
+          import android.app.job.JobInfo;
+          import android.app.job.JobWorkItem;
+
+          interface IJobScheduler {
+              int schedule(in JobInfo job);
+              void cancel(int jobId);
+              void cancelAll();
+              List<JobInfo> getAllPendingJobs();
+              int enqueue(in JobInfo job, in JobWorkItem work);
+              JobInfo getPendingJob(int jobId);
+          }
+          """)
           PY
 
       - name: Set up Gradle 8.7
