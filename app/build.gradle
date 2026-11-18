@@ -9,11 +9,9 @@ android {
     defaultConfig {
         applicationId 'com.privacyclone.app'
         minSdk 26
-        // API 27 keeps the first release focused on Android 8.0/8.1 compatibility.
-        // Raise this before any Play Store publication and re-test provisioning behavior.
         targetSdk 27
-        versionCode 3
-        versionName '0.3.0'
+        versionCode 4
+        versionName '0.4.0'
     }
 
     compileOptions {
@@ -27,4 +25,8 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+}
+
+dependencies {
+    implementation project(':virtualapp')
 }
