@@ -23,6 +23,7 @@ This branch replaces Android Work Profile / DevicePolicyManager cloning with an 
 - Request missing dangerous runtime permissions before launching a clone. The grants belong to PrivacyClone's host package and are not per-clone isolated in this prototype.
 - Removed Work Profile provisioning and the device-admin receiver from the app manifest.
 - GitHub Actions checks out the engine submodule, installs the NDK, enables AIDL source generation, and supplies Android 8.1 hidden framework API signatures through a compile-only Robolectric framework JAR.
+- CI removes the obsolete commented-out IJobScheduler AIDL file because the equivalent Java Binder interface is already present, and patches one reflection wrapper from List<?> to raw List for Java compiler compatibility.
 
 ## Important limitations
 
@@ -43,7 +44,7 @@ Do not use the initial prototype with banking, corporate, or primary messaging a
 
 ## Build notes
 
-The engine's original Android Gradle Plugin-era library build does not declare a modern namespace or NDK version and assumes AIDL generation. The CI workflow patches the checked-out submodule at build time to add the namespace, pin the NDK, and enable AIDL. It also places Robolectric's Android 8.1 framework JAR on the library compile classpath only, because the engine imports hidden Android framework interfaces omitted from the public SDK stubs. That JAR is not packaged in the APK. The pinned upstream submodule itself remains unchanged.
+The engine's original Android Gradle Plugin-era library build does not declare a modern namespace or NDK version and assumes AIDL generation. The CI workflow patches the checked-out submodule at build time to add the namespace, pin the NDK, and enable AIDL. It also places Robolectric's Android 8.1 framework JAR on the library compile classpath only, because the engine imports hidden Android framework interfaces omitted from the public SDK stubs. That JAR is not packaged in the APK. The upstream IJobScheduler AIDL file is fully commented out, while its matching Java Binder implementation is already checked in; CI removes the stale AIDL input so it neither fails parsing nor duplicates the Java class. CI also changes one mirror declaration from RefMethod<List<?>> to RefMethod<List> to satisfy the modern Java compiler at existing reflection call sites. These patches are temporary changes to the CI checkout; the pinned upstream submodule remains unchanged.
 
 ## Licensing
 
@@ -55,7 +56,7 @@ VirtualXposed's upstream repository identifies GPL-3.0 and its README explicitly
 - [x] VirtualApp Gradle module linked and initialized.
 - [x] Clone/import/list/launch/remove flows implemented.
 - [x] CI updated to fetch the submodule and native NDK.
-- [ ] GitHub Actions build verified successfully.
+- [x] GitHub Actions debug build verified successfully (run #43, commit 18c4118; artifact uploaded).
 - [ ] Install and test on the actual ARM64 Android 8.1 Huawei phone.
 - [ ] Verify separate data and login sessions across two clones of the same package.
 - [ ] Verify runtime permission behavior, notifications, reboot persistence, and background launch.
