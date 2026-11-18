@@ -40,8 +40,10 @@ jobs:
           path = Path("vendor/VirtualXposed/VirtualApp/lib/build.gradle")
           text = path.read_text()
           if "namespace " not in text:
-              text = text.replace("android {", "android {\n    namespace 'com.lody.virtual'", 1)
-              path.write_text(text)
+              text = text.replace("android {", "android {\n    namespace 'com.lody.virtual'\n    ndkVersion '21.4.7075529'", 1)
+          elif "ndkVersion " not in text:
+              text = text.replace("android {", "android {\n    ndkVersion '21.4.7075529'", 1)
+          path.write_text(text)
           PY
 
       - name: Set up Gradle 8.7
@@ -50,8 +52,6 @@ jobs:
           gradle-version: "8.7"
 
       - name: Build APK
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/21.4.7075529
         run: gradle --no-daemon assembleDebug
 
       - name: Upload APK
