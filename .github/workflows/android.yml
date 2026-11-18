@@ -71,6 +71,76 @@ jobs:
           mirror_text = mirror_file.read_text()
           mirror_text = mirror_text.replace("RefMethod<List<?>> getList;", "RefMethod<List> getList;")
           mirror_file.write_text(mirror_text)
+
+          # VirtualApp 0.22 creates its server keep-alive foreground service with
+          # new Notification() (no channel and no small icon). Our host targets API 27,
+          # so Android 8.x rejects that notification and can kill the :x Binder process.
+          # Patch both foreground-service notifications before compiling the engine.
+          daemon_file = Path("vendor/VirtualXposed/VirtualApp/lib/src/main/java/com/lody/virtual/client/stub/DaemonService.java")
+          daemon_text = daemon_file.read_text()
+          required_source = "startForeground(NOTIFY_ID, new Notification());"
+          if required_source not in daemon_text:
+              raise SystemExit("Expected upstream DaemonService notification code was not found; refusing an unsafe partial patch.")
+          daemon_text = daemon_text.replace(
+              "import android.app.Notification;\n",
+              "import android.app.Notification;\n"
+              "import android.app.NotificationChannel;\n"
+              "import android.app.NotificationManager;\n",
+              1
+          )
+          daemon_text = daemon_text.replace(
+              "private static final int NOTIFY_ID = 1001;",
+              "private static final int NOTIFY_ID = 1001;\n"
+              "    private static final String CHANNEL_ID = \"privacyclone_virtual_engine\";",
+              1
+          )
+          daemon_text = daemon_text.replace(
+              "        context.startService(new Intent(context, DaemonService.class));",
+              "        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {\n"
+              "            ensureNotificationChannel(context);\n"
+              "            context.startForegroundService(new Intent(context, DaemonService.class));\n"
+              "        } else {\n"
+              "            context.startService(new Intent(context, DaemonService.class));\n"
+              "        }",
+              1
+          )
+          daemon_text = daemon_text.replace(required_source,
+              "startForeground(NOTIFY_ID, buildForegroundNotification(this));")
+          helper = """
+          private static void ensureNotificationChannel(Context context) {
+              if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+              NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+              if (manager == null) throw new IllegalStateException("NotificationManager is unavailable.");
+              NotificationChannel channel = new NotificationChannel(
+                      CHANNEL_ID, "Virtual app container", NotificationManager.IMPORTANCE_LOW);
+              channel.setDescription("Keeps the PrivacyClone virtual-app server available.");
+              channel.setShowBadge(false);
+              manager.createNotificationChannel(channel);
+          }
+
+          private static Notification buildForegroundNotification(Context context) {
+              Notification.Builder builder;
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                  builder = new Notification.Builder(context, CHANNEL_ID);
+              } else {
+                  builder = new Notification.Builder(context)
+                          .setPriority(Notification.PRIORITY_MIN);
+              }
+              return builder
+                      .setSmallIcon(android.R.drawable.stat_notify_sync)
+                      .setContentTitle("PrivacyClone")
+                      .setContentText("Virtual app container is running")
+                      .setCategory(Notification.CATEGORY_SERVICE)
+                      .setOngoing(true)
+                      .setOnlyAlertOnce(true)
+                      .build();
+          }
+
+          """
+          insertion = "    private static final int NOTIFY_ID = 1001;"
+          if "ensureNotificationChannel(Context context)" not in daemon_text:
+              daemon_text = daemon_text.replace(insertion, helper + insertion, 1)
+          daemon_file.write_text(daemon_text)
           PY
 
       - name: Set up Gradle 8.7
