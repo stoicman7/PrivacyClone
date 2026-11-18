@@ -1,39 +1,61 @@
-# Virtual container migration — experimental branch
+# Virtual container migration
 
-This branch evaluates an in-app virtual Android container for PrivacyClone. It does not use Android Work Profile or DevicePolicyManager as the clone engine.
+This branch replaces Android Work Profile / DevicePolicyManager cloning with an embedded virtual Android container. It does not create or require a managed profile.
 
-## Selected prototype engine
+## Selected engine
 
 - Upstream: https://github.com/android-hacker/VirtualXposed
-- Pinned commit: `122beb371519cb2d221ce06756361aaa30e2674f` (VirtualXposed 0.22.0)
-- Engine module: `VirtualApp/lib`
-- Documented host range: Android 5.0–10.0, which includes Android 8.1 / API 27.
-- Native ABIs in the upstream library build: `arm64-v8a` and `x86_64`.
-- Import paths in the upstream project: clone an installed app or install from an APK.
-- Multi-instance model: VirtualApp virtual users. Install the same package for different virtual user IDs; each user receives a separate virtual app-data directory.
+- Pinned source revision: 122beb371519cb2d221ce06756361aaa30e2674f (VirtualXposed 0.22.0)
+- Gradle module: vendor/VirtualXposed/VirtualApp/lib
+- Native ABIs declared by the upstream library: arm64-v8a and x86_64
+- The upstream README describes Android 5.0–10.0 support. Android 8.1 falls within that published range, but individual apps and vendor firmware still need real-device testing.
 
-## Device constraints
+## Implemented in this branch
 
-The upstream native build does not declare `armeabi-v7a`. This prototype therefore targets 64-bit ARM devices (including ARM64 Huawei models), not 32-bit-only devices. The actual phone ABI must be confirmed before treating an APK as device-ready.
+- VirtualCore startup from PrivacyCloneApplication.
+- VirtualApp library linked as a Gradle subproject.
+- Import an already-installed single-file app by package name.
+- Import a single-file APK through Android's document picker.
+- Create a separate VirtualApp user for each clone.
+- Install the imported package into that virtual user.
+- List, launch, and remove clone instances.
+- Persist local clone metadata in PrivacyClone's private SharedPreferences.
+- Request missing dangerous runtime permissions before launching a clone. The grants belong to PrivacyClone's host package and are not per-clone isolated in this prototype.
+- Removed Work Profile provisioning and the device-admin receiver from the app manifest.
+- GitHub Actions checks out the engine submodule and installs the NDK for the native build.
 
-The engine is old (0.22.0, 2022) and its Android 8–10 compatibility claim is not a guarantee that every current app will run. Apps that depend on newer Android APIs, Play Integrity, DRM, special native code, or vendor-specific services may fail.
+## Important limitations
 
-## Privacy and isolation model
+- The upstream code is old (2022) and is not guaranteed to support every Android app, Huawei firmware build, Google Play service, Play Integrity check, DRM path, or modern API.
+- The first import flow supports single-file APKs. Split APK applications are rejected by the installed-app import path.
+- VirtualApp's manifest declares a large permission superset, including Internet, location, contacts, camera, microphone, phone, SMS, and storage permissions. These declarations are merged into the host APK to support hosted apps.
+- Runtime permissions requested by a clone are requested for PrivacyClone itself. They may be shared across all clones and are not individually isolated.
+- Some special permissions and app-specific background services are not covered by the current permission bridge.
+- Virtual users separate virtual app data, but are not Android OS users. They do not create separate kernel UIDs, SELinux domains, hardware devices, or network connections.
+- The current code does not spoof IMEI, SIM identifiers, Android build properties, IP addresses, or other hardware/network fingerprints. Apps may detect virtualization.
+- This is an app compatibility/container feature, not a security boundary for untrusted apps.
 
-Virtual user IDs isolate the container's package data and accounts as implemented by the engine. They are not Android OS users and do not create separate kernel UIDs or SELinux domains. Treat this as an app-compatibility / multi-account container, not a security boundary for hostile apps.
+## Privacy model
 
-The engine exposes a `PhoneInfoDelegate` with a virtual user ID. PrivacyClone can use it to return stable, privacy-safe per-instance values for the identifiers that the engine intercepts. It cannot rewrite the phone's real IMEI, SIM identity, radio firmware, or every hardware / network signal. Privacy settings must state exactly which hooks are active.
+PrivacyClone adds no analytics, crash upload service, or telemetry. However, because the engine contributes Internet permission, cloned apps can use the network normally. Review permissions and test with non-sensitive accounts before relying on the prototype.
 
-## Licensing note
+Do not use the initial prototype with banking, corporate, or primary messaging accounts. Test on a spare device or test account first.
 
-VirtualXposed's repository is GPL-3.0 and its README says commercial use is not allowed. The underlying VirtualApp project has also published a separate authorization notice. This branch is an experimental, personal-use evaluation only. Do not distribute a modified APK or publish a derivative release until the applicable upstream permissions and GPL source obligations are confirmed. Keep upstream notices and source available.
+## Build notes
 
-## Migration status
+The engine's original Android Gradle Plugin-era library build does not declare a modern namespace or NDK version. The CI workflow makes those two build-time adjustments to the checked-out submodule before invoking Gradle. The pinned upstream submodule itself remains unchanged.
 
-- [x] Create isolated `virtual-container-migration` branch.
-- [x] Pin the VirtualXposed source revision as a Git submodule.
-- [ ] Integrate the VirtualApp library module and its native build.
-- [ ] Initialize the engine from PrivacyClone's Application class.
-- [ ] Replace Work Profile provisioning with virtual-user and package-import flows.
-- [ ] Store clone metadata and per-instance privacy settings locally.
-- [ ] Build in GitHub Actions and test on the target Huawei Android 8.1 phone.
+## Licensing
+
+VirtualXposed's upstream repository identifies GPL-3.0 and its README explicitly disallows commercial use, referring to a separate VirtualApp declaration. This branch is for personal evaluation only. Do not distribute a modified APK or use it commercially until all upstream permissions, license conditions, and source-distribution obligations are confirmed. Keep all notices and corresponding source.
+
+## Validation status
+
+- [x] Work Profile implementation removed from the launcher flow and app manifest.
+- [x] VirtualApp Gradle module linked and initialized.
+- [x] Clone/import/list/launch/remove flows implemented.
+- [x] CI updated to fetch the submodule and native NDK.
+- [ ] GitHub Actions build verified successfully.
+- [ ] Install and test on the actual ARM64 Android 8.1 Huawei phone.
+- [ ] Verify separate data and login sessions across two clones of the same package.
+- [ ] Verify runtime permission behavior, notifications, reboot persistence, and background launch.
