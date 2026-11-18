@@ -5,6 +5,7 @@
     <!-- Network access is required by the virtual-app engine for apps the user chooses to clone.
          PrivacyClone itself does not upload diagnostics or use analytics. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:name=".PrivacyCloneApplication"
