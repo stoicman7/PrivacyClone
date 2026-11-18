@@ -35,7 +35,9 @@ The GitHub Actions preparation step now patches the upstream `DaemonService` in 
 - Promote the main daemon service immediately with a valid channel-backed notification and system small icon.
 - Avoid the legacy `InnerService` notification-removal pattern, which reuses the same notification ID and can remove the server's foreground notification.
 
-This is a targeted compatibility patch to the pinned upstream source. The submodule commit itself is not altered; the patch is applied by the versioned CI workflow. The app's diagnostics also show the actual process bitness, supported ABIs, and whether the packaged `libva++.so` is present. Clone failures report the stage and exception message to make any remaining device-specific crash diagnosable.
+This is a targeted compatibility patch to the pinned upstream source. The submodule commit itself is not altered; the patch is applied by the versioned CI workflow. The app's diagnostics show actual process bitness, supported ABIs, and whether the packaged `libva++.so` is present. Startup now stops with a clear error if the process is 32-bit, the device has no supported 64-bit ABI, or the native library is missing. Clone failures report the stage and exception message to make remaining device-specific problems diagnosable.
+
+A separate network-free Virtualization Probe module is built by CI. It compares app-visible paths, process/package UID values, process bitness, Google components, WebView provider and hardware-feature availability between normal and virtual runs.
 
 ## Important limitations
 
@@ -69,7 +71,9 @@ VirtualXposed's upstream repository identifies GPL-3.0 and its README explicitly
 - [x] Clone/import/list/launch/remove flows implemented.
 - [x] Installed-app import stages complete split APK sets (base + configuration/feature splits) for VirtualApp's PackageParser cluster parser.
 - [x] CI updated to fetch the submodule and native NDK.
+- [x] Standalone Virtualization Probe APK and comparison instructions added.
+- [x] Host native-ABI/library preflight added.
 - [x] GitHub Actions debug build verified successfully (run #43, commit 18c4118; artifact uploaded).
-- [ ] Install and test on the actual Huawei Android 8.1 phone; verify the reported process bitness and native library presence.
+- [ ] Install both APKs on the actual Huawei Android 8.1 phone; compare the probe running normally and as a virtual clone, then verify the reported process bitness and native library presence.
 - [ ] Verify separate data and login sessions across two clones of the same package.
 - [ ] Verify runtime permission behavior, notifications, reboot persistence, and background launch.
