@@ -20,6 +20,7 @@ This is an experimental migration branch, not a verified release. The GitHub Act
 
 - The pinned VirtualApp/VirtualXposed source is version 0.22.0 from 2022. Its upstream README describes support through Android 10; Android 8.1 is within that stated range, but this does not guarantee compatibility with every app or Huawei firmware.
 - The native library in this source build declares arm64-v8a and x86_64. A 32-bit-only runtime is not supported; the host checks process bitness, ABI support and the packaged native library before starting the engine.
+- VirtualApp's `libva++.so` is packaged for extraction on install because its I/O-redirection implementation requires a real file under Android's `nativeLibraryDir`. CI verifies the native library exists for ARM64 and x86_64 and is compressed for extraction.
 - Installed-app import stages the base APK and installed split APKs together. Manual document-picker import accepts one standalone APK file.
 - Apps that depend on Google Play services, Play Integrity, DRM, vendor frameworks, special native code, or newer Android APIs may fail to install or launch.
 - A virtual user is not an Android OS user. It does not create a separate kernel UID, SELinux domain, hardware device, or network connection. Treat this as an app-data container, not a security boundary against a hostile app.
