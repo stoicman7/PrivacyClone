@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Network access is required by the virtual-app engine for apps the user chooses to clone.
          PrivacyClone itself does not upload diagnostics or use analytics. -->
@@ -8,6 +9,7 @@
     <application
         android:name=".PrivacyCloneApplication"
         android:allowBackup="false"
+        tools:replace="android:allowBackup,android:label"
         android:icon="@drawable/ic_privacyclone"
         android:roundIcon="@drawable/ic_privacyclone"
         android:label="PrivacyClone"
