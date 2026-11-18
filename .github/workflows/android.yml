@@ -58,28 +58,19 @@ jobs:
               )
           path.write_text(text)
 
-          # The pinned upstream tree has this interface fully commented out,
-          # although VJobSchedulerService and VJobScheduler still use it.
+          # This AIDL file is entirely commented out; the matching generated
+          # Java Binder interface is already checked into the upstream source.
+          # Remove the stale source to avoid syntax errors and a duplicate class.
           job_aidl = Path("vendor/VirtualXposed/VirtualApp/lib/src/main/aidl/com/lody/virtual/server/IJobScheduler.aidl")
-          active_source = "\\n".join(
-              line for line in job_aidl.read_text().splitlines()
-              if not line.lstrip().startswith("//")
-          )
-          if "interface IJobScheduler" not in active_source:
-              job_aidl.write_text("""package com.lody.virtual.server;
+          if job_aidl.exists():
+              job_aidl.unlink()
 
-          import android.app.job.JobInfo;
-          import android.app.job.JobWorkItem;
-
-          interface IJobScheduler {
-              int schedule(in JobInfo job);
-              void cancel(int jobId);
-              void cancelAll();
-              List<JobInfo> getAllPendingJobs();
-              int enqueue(in JobInfo job, in JobWorkItem work);
-              JobInfo getPendingJob(int jobId);
-          }
-          """)
+          # Old mirror code used List<?> here, making the legacy assignments
+          # fail under the modern compiler. Raw List matches this reflective API.
+          mirror_file = Path("vendor/VirtualXposed/VirtualApp/lib/src/main/java/mirror/android/content/pm/ParceledListSlice.java")
+          mirror_text = mirror_file.read_text()
+          mirror_text = mirror_text.replace("RefMethod<List<?>> getList;", "RefMethod<List> getList;")
+          mirror_file.write_text(mirror_text)
           PY
 
       - name: Set up Gradle 8.7
