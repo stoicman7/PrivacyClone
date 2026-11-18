@@ -41,7 +41,7 @@ The project is built in GitHub Actions; Android Studio is not required on your c
 3. Open the run triggered by the branch push.
 4. Download the **PrivacyClone-debug-apk** artifact if the build succeeds.
 
-The workflow checks out the VirtualXposed submodule recursively and installs Android SDK 28/35 plus NDK 21.4.7075529. It adds the missing Android Gradle Plugin namespace to the legacy library checkout during the CI job; this patch is not written back into the upstream submodule.
+The workflow checks out the VirtualXposed submodule recursively and installs Android SDK 28/35 plus NDK 21.4.7075529. It enables AIDL generation, adds the Android Gradle Plugin namespace and NDK pin to the legacy library checkout, and uses Robolectric's Android 8.1 framework JAR as a compile-only source of hidden framework API signatures. The JAR is not packaged into PrivacyClone. These build-time adjustments are applied only to the checked-out submodule during CI; they are not written back to upstream.
 
 ## Device test plan
 
