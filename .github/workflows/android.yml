@@ -48,12 +48,12 @@ jobs:
           if "buildFeatures" not in text:
               android_lines.extend(["    buildFeatures {", "        aidl true", "    }"])
           if android_lines:
-              text = text.replace("android {", "android {\\n" + "\\n".join(android_lines), 1)
+              text = text.replace("android {", "android {\n" + "\n".join(android_lines), 1)
 
           if "org.robolectric:android-all" not in text:
               text = text.replace(
                   "dependencies {",
-                  "dependencies {\\n    compileOnly 'org.robolectric:android-all:8.1.0-robolectric-4611349'",
+                  "dependencies {\n    compileOnly 'org.robolectric:android-all:8.1.0-robolectric-4611349'",
                   1
               )
           path.write_text(text)
