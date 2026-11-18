@@ -230,6 +230,11 @@ public final class PrivacyCloneActivity extends Activity {
         LinearLayout.LayoutParams p = params(-1, -2);
         p.topMargin = dp(13);
         card.addView(disclaimer, p);
+
+        TextView permissionNotice = text("The embedded engine declares broad permissions, including Internet and app capabilities such as location, contacts, camera, microphone, phone and SMS. Cloned apps may use the network. Runtime grants requested here belong to PrivacyClone and may be shared across clones; PrivacyClone does not upload its own diagnostics.", 11, MUTED, false);
+        LinearLayout.LayoutParams permissionParams = params(-1, -2);
+        permissionParams.topMargin = dp(10);
+        card.addView(permissionNotice, permissionParams);
         addCard(card);
     }
 
