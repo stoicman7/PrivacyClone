@@ -31,6 +31,13 @@ dependencyResolutionManagement {
             }
         }
         maven {
+            name = "GradleReleases"
+            url = uri("https://repo.gradle.org/gradle/libs-releases/")
+            content {
+                includeGroup("com.getkeepsafe.relinker")
+            }
+        }
+        maven {
             name = "JCenterReadOnlyArchive"
             url = uri("https://jcenter.bintray.com/")
             content {
