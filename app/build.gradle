@@ -19,6 +19,16 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
+    // VirtualApp's NativeEngine.enableIORedirect() opens libva++.so through
+    // ApplicationInfo.nativeLibraryDir. Uncompressed APK-native libraries may
+    // be loaded directly from the APK without creating that on-disk file.
+    // Force extraction so the engine's filesystem-path requirement is satisfied.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
