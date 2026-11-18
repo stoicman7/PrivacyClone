@@ -94,27 +94,39 @@ jobs:
               "    private static final String CHANNEL_ID = \"privacyclone_virtual_engine\";",
               1
           )
-          daemon_text = daemon_text.replace(
-              "        context.startService(new Intent(context, DaemonService.class));",
-              "        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {\n"
-              "            ensureNotificationChannel(context);\n"
-              "            if (showNotification) {\n"
-              "                context.startForegroundService(new Intent(context, DaemonService.class));\n"
-              "            } else {\n"
-              "                context.startService(new Intent(context, DaemonService.class));\n"
-              "            }\n"
-              "        } else {\n"
-              "            context.startService(new Intent(context, DaemonService.class));\n"
+          import re
+          daemon_text, start_count = re.subn(
+              r"(?m)^\\s*context\\.startService\\(new Intent\\(context, DaemonService\\.class\\)\\);$",
+              "        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {\\n"
+              "            ensureNotificationChannel(context);\\n"
+              "            if (showNotification) {\\n"
+              "                context.startForegroundService(new Intent(context, DaemonService.class));\\n"
+              "            } else {\\n"
+              "                context.startService(new Intent(context, DaemonService.class));\\n"
+              "            }\\n"
+              "        } else {\\n"
+              "            context.startService(new Intent(context, DaemonService.class));\\n"
               "        }",
-              1
+              daemon_text,
+              count=1
           )
+          if start_count != 1:
+              raise SystemExit("Could not patch VirtualApp DaemonService startup call.")
+
           daemon_text = daemon_text.replace(required_source,
               "startForeground(NOTIFY_ID, buildForegroundNotification(this));")
           # The main service itself is the persistent foreground service. Starting
           # InnerService with the same notification ID can immediately remove the
           # notification while leaving the server process in an inconsistent state.
-          daemon_text = daemon_text.replace(
-              "        startService(new Intent(this, InnerService.class));\n", "")
+          daemon_text, inner_count = re.subn(
+              r"(?m)^\\s*startService\\(new Intent\\(this, InnerService\\.class\\)\\);\\n",
+              "",
+              daemon_text,
+              count=1
+          )
+          if inner_count != 1:
+              raise SystemExit("Could not remove the legacy InnerService notification-removal call.")
+
           helper = """
           private static void ensureNotificationChannel(Context context) {
               if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
