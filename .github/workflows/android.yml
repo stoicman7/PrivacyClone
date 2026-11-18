@@ -169,12 +169,19 @@ jobs:
         with:
           gradle-version: "8.7"
 
-      - name: Build APK
-        run: gradle --no-daemon assembleDebug
+      - name: Build APKs
+        run: gradle --no-daemon :app:assembleDebug :probe:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: PrivacyClone-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload virtualization diagnostic probe
+        uses: actions/upload-artifact@v7
+        with:
+          name: Virtualization-Probe-debug-apk
+          path: probe/build/outputs/apk/debug/probe-debug.apk
           if-no-files-found: error
