@@ -22,7 +22,7 @@ This branch replaces Android Work Profile / DevicePolicyManager cloning with an 
 - Persist local clone metadata in PrivacyClone's private SharedPreferences.
 - Request missing dangerous runtime permissions before launching a clone. The grants belong to PrivacyClone's host package and are not per-clone isolated in this prototype.
 - Removed Work Profile provisioning and the device-admin receiver from the app manifest.
-- GitHub Actions checks out the engine submodule and installs the NDK for the native build.
+- GitHub Actions checks out the engine submodule, installs the NDK, enables AIDL source generation, and supplies Android 8.1 hidden framework API signatures through a compile-only Robolectric framework JAR.
 
 ## Important limitations
 
@@ -43,7 +43,7 @@ Do not use the initial prototype with banking, corporate, or primary messaging a
 
 ## Build notes
 
-The engine's original Android Gradle Plugin-era library build does not declare a modern namespace or NDK version. The CI workflow makes those two build-time adjustments to the checked-out submodule before invoking Gradle. The pinned upstream submodule itself remains unchanged.
+The engine's original Android Gradle Plugin-era library build does not declare a modern namespace or NDK version and assumes AIDL generation. The CI workflow patches the checked-out submodule at build time to add the namespace, pin the NDK, and enable AIDL. It also places Robolectric's Android 8.1 framework JAR on the library compile classpath only, because the engine imports hidden Android framework interfaces omitted from the public SDK stubs. That JAR is not packaged in the APK. The pinned upstream submodule itself remains unchanged.
 
 ## Licensing
 
