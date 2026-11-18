@@ -8,6 +8,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PermissionInfo;
+import android.content.pm.ResolveInfo;
 import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
@@ -195,7 +196,7 @@ public final class PrivacyCloneActivity extends Activity {
         inputParams.topMargin = dp(15);
         card.addView(packageInput, inputParams);
 
-        Button install = button("CLONE INSTALLED APP");
+        Button install = button("SELECT OR CLONE INSTALLED APP");
         LinearLayout.LayoutParams installParams = params(-1, dp(46));
         installParams.topMargin = dp(10);
         card.addView(install, installParams);
@@ -386,6 +387,10 @@ public final class PrivacyCloneActivity extends Activity {
 
     private void cloneInstalledApp() {
         String packageName = packageInput.getText().toString().trim();
+        if (packageName.isEmpty()) {
+            showInstalledAppPicker();
+            return;
+        }
         if (!packageName.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) {
             packageInput.setError("Enter a valid Android package name");
             return;
@@ -407,6 +412,46 @@ public final class PrivacyCloneActivity extends Activity {
             packageInput.setError("This app is not installed on the phone");
         } catch (Exception e) {
             toast("Could not read the installed app. Try importing its APK.");
+        }
+    }
+
+    private void showInstalledAppPicker() {
+        try {
+            Intent launcher = new Intent(Intent.ACTION_MAIN);
+            launcher.addCategory(Intent.CATEGORY_LAUNCHER);
+            List<ResolveInfo> activities = getPackageManager().queryIntentActivities(launcher, 0);
+            Collections.sort(activities, (a, b) ->
+                    String.valueOf(a.loadLabel(getPackageManager())).toLowerCase(Locale.US)
+                            .compareTo(String.valueOf(b.loadLabel(getPackageManager())).toLowerCase(Locale.US)));
+
+            List<ResolveInfo> choices = new ArrayList<>();
+            Set<String> packages = new HashSet<>();
+            for (ResolveInfo info : activities) {
+                if (info.activityInfo == null) continue;
+                String packageName = info.activityInfo.packageName;
+                if (packageName.equals(getPackageName()) || !packages.add(packageName)) continue;
+                choices.add(info);
+            }
+            if (choices.isEmpty()) {
+                toast("No launchable installed apps were found.");
+                return;
+            }
+            String[] labels = new String[choices.size()];
+            for (int i = 0; i < choices.size(); i++) {
+                ResolveInfo info = choices.get(i);
+                labels[i] = String.valueOf(info.loadLabel(getPackageManager()));
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("Choose an installed app to clone")
+                    .setItems(labels, (dialog, which) -> {
+                        String packageName = choices.get(which).activityInfo.packageName;
+                        packageInput.setText(packageName);
+                        cloneInstalledApp();
+                    })
+                    .setNegativeButton("CANCEL", null)
+                    .show();
+        } catch (Exception e) {
+            toast("Android could not list installed apps.");
         }
     }
 
