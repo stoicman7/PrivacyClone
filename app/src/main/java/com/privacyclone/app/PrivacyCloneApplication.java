@@ -10,7 +10,8 @@ import com.lody.virtual.client.stub.VASettings;
 
 /**
  * Starts the embedded VirtualApp engine before any Activity tries to use it.
- * The initializer intentionally installs no analytics, crash-upload, or Xposed hooks.
+ * No external modules, analytics, crash uploads, or identity-spoofing delegates are registered here.
+ * The VirtualApp engine still uses its own internal framework hooks to virtualize app processes.
  */
 public final class PrivacyCloneApplication extends Application {
     private static volatile String startupError;
