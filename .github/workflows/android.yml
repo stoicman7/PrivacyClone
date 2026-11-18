@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "virtual-container-migration"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -27,20 +29,198 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Android SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK and NDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platforms;android-28" "build-tools;28.0.3" "ndk;21.4.7075529"
+
+      - name: Prepare legacy VirtualApp module for current Android Gradle Plugin
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("vendor/VirtualXposed/VirtualApp/lib/build.gradle")
+          text = path.read_text()
+
+          android_lines = []
+          if "namespace " not in text:
+              android_lines.append("    namespace 'com.lody.virtual'")
+          if "ndkVersion " not in text:
+              android_lines.append("    ndkVersion '21.4.7075529'")
+          if "buildFeatures" not in text:
+              android_lines.extend(["    buildFeatures {", "        aidl true", "    }"])
+          if android_lines:
+              text = text.replace("android {", "android {\n" + "\n".join(android_lines), 1)
+
+          if "org.robolectric:android-all" not in text:
+              text = text.replace(
+                  "dependencies {",
+                  "dependencies {\n    compileOnly 'org.robolectric:android-all:8.1.0-robolectric-4611349'",
+                  1
+              )
+          path.write_text(text)
+
+          # This AIDL file is entirely commented out; the matching generated
+          # Java Binder interface is already checked into the upstream source.
+          # Remove the stale source to avoid syntax errors and a duplicate class.
+          job_aidl = Path("vendor/VirtualXposed/VirtualApp/lib/src/main/aidl/com/lody/virtual/server/IJobScheduler.aidl")
+          if job_aidl.exists():
+              job_aidl.unlink()
+
+          # Old mirror code used List<?> here, making the legacy assignments
+          # fail under the modern compiler. Raw List matches this reflective API.
+          mirror_file = Path("vendor/VirtualXposed/VirtualApp/lib/src/main/java/mirror/android/content/pm/ParceledListSlice.java")
+          mirror_text = mirror_file.read_text()
+          mirror_text = mirror_text.replace("RefMethod<List<?>> getList;", "RefMethod<List> getList;")
+          mirror_file.write_text(mirror_text)
+
+          # VirtualApp 0.22 creates its server keep-alive foreground service with
+          # new Notification() (no channel and no small icon). Our host targets API 27,
+          # so Android 8.x rejects that notification and can kill the :x Binder process.
+          # Patch both foreground-service notifications before compiling the engine.
+          daemon_file = Path("vendor/VirtualXposed/VirtualApp/lib/src/main/java/com/lody/virtual/client/stub/DaemonService.java")
+          daemon_text = daemon_file.read_text()
+          required_source = "startForeground(NOTIFY_ID, new Notification());"
+          if required_source not in daemon_text:
+              raise SystemExit("Expected upstream DaemonService notification code was not found; refusing an unsafe partial patch.")
+          daemon_text = daemon_text.replace(
+              "import android.app.Notification;\n",
+              "import android.app.Notification;\n"
+              "import android.app.NotificationChannel;\n"
+              "import android.app.NotificationManager;\n",
+              1
+          )
+          daemon_text = daemon_text.replace(
+              "private static final int NOTIFY_ID = 1001;",
+              "private static final int NOTIFY_ID = 1001;\n"
+              "    private static final String CHANNEL_ID = \"privacyclone_virtual_engine\";",
+              1
+          )
+          import re
+          daemon_text, start_count = re.subn(
+              r"(?m)^\s*context\.startService\(new Intent\(context, DaemonService\.class\)\);$",
+              "        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {\n"
+              "            ensureNotificationChannel(context);\n"
+              "            if (showNotification) {\n"
+              "                context.startForegroundService(new Intent(context, DaemonService.class));\n"
+              "            } else {\n"
+              "                context.startService(new Intent(context, DaemonService.class));\n"
+              "            }\n"
+              "        } else {\n"
+              "            context.startService(new Intent(context, DaemonService.class));\n"
+              "        }",
+              daemon_text,
+              count=1
+          )
+          if start_count != 1:
+              raise SystemExit("Could not patch VirtualApp DaemonService startup call.")
+
+          daemon_text = daemon_text.replace(required_source,
+              "startForeground(NOTIFY_ID, buildForegroundNotification(this));")
+          # The main service itself is the persistent foreground service. Starting
+          # InnerService with the same notification ID can immediately remove the
+          # notification while leaving the server process in an inconsistent state.
+          daemon_text, inner_count = re.subn(
+              r"(?m)^\s*startService\(new Intent\(this, InnerService\.class\)\);\n",
+              "",
+              daemon_text,
+              count=1
+          )
+          if inner_count != 1:
+              raise SystemExit("Could not remove the legacy InnerService notification-removal call.")
+
+          helper = """
+          private static void ensureNotificationChannel(Context context) {
+              if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+              NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+              if (manager == null) throw new IllegalStateException("NotificationManager is unavailable.");
+              NotificationChannel channel = new NotificationChannel(
+                      CHANNEL_ID, "Virtual app container", NotificationManager.IMPORTANCE_LOW);
+              channel.setDescription("Keeps the PrivacyClone virtual-app server available.");
+              channel.setShowBadge(false);
+              manager.createNotificationChannel(channel);
+          }
+
+          private static Notification buildForegroundNotification(Context context) {
+              Notification.Builder builder;
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                  builder = new Notification.Builder(context, CHANNEL_ID);
+              } else {
+                  builder = new Notification.Builder(context)
+                          .setPriority(Notification.PRIORITY_MIN);
+              }
+              return builder
+                      .setSmallIcon(android.R.drawable.stat_notify_sync)
+                      .setContentTitle("PrivacyClone")
+                      .setContentText("Virtual app container is running")
+                      .setCategory(Notification.CATEGORY_SERVICE)
+                      .setOngoing(true)
+                      .setOnlyAlertOnce(true)
+                      .build();
+          }
+
+          """
+          insertion = "    private static final int NOTIFY_ID = 1001;"
+          if "ensureNotificationChannel(Context context)" not in daemon_text:
+              daemon_text = daemon_text.replace(insertion, helper + insertion, 1)
+          daemon_file.write_text(daemon_text)
+          PY
+
+      # Preserve the debug signing key between trusted branch builds so
+      # APK updates keep the same certificate instead of invalidating app data.
+      # Pull-request builds deliberately do not restore or write this cache.
+      - name: Restore persistent Android debug signing key
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: privacyclone-debug-keystore-${{ runner.os }}-v1
 
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.7"
 
-      - name: Build APK
-        run: gradle --no-daemon assembleDebug
+      - name: Build APKs
+        run: gradle --no-daemon :app:assembleDebug :probe:assembleDebug
+
+      - name: Verify VirtualApp native libraries are packaged for extraction
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+
+          apk = Path("app/build/outputs/apk/debug/app-debug.apk")
+          required = (
+              "lib/arm64-v8a/libva++.so",
+              "lib/x86_64/libva++.so",
+          )
+
+          if not apk.is_file():
+              raise SystemExit("Debug APK was not produced.")
+
+          with ZipFile(apk) as archive:
+              for entry in required:
+                  try:
+                      info = archive.getinfo(entry)
+                  except KeyError:
+                      raise SystemExit(f"Required VirtualApp native library is missing: {entry}")
+                  if info.compress_type != ZIP_DEFLATED:
+                      raise SystemExit(
+                          f"{entry} is not compressed for legacy extraction. "
+                          "Set packaging.jniLibs.useLegacyPackaging = true."
+                      )
+                  print(f"OK: {entry} is compressed and will be extracted on install.")
+          PY
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: PrivacyClone-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload virtualization diagnostic probe
+        uses: actions/upload-artifact@v7
+        with:
+          name: Virtualization-Probe-debug-apk
+          path: probe/build/outputs/apk/debug/probe-debug.apk
           if-no-files-found: error

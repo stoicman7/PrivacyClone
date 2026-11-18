@@ -1,4 +1,3 @@
 <resources>
     <string name="app_name">PrivacyClone</string>
-    <string name="device_admin_description">Manages the separate work profile used to install and isolate cloned apps.</string>
 </resources>

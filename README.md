@@ -1,75 +1,75 @@
 # PrivacyClone
 
-A lightweight, local-first Android app-isolation and privacy-diagnostics prototype, designed to run on Android 8.0+ (API 26+), including Android 8.1 devices.
+PrivacyClone is a local-first Android app-cloning prototype. It runs cloned apps inside an embedded virtual Android container instead of creating an Android Work Profile.
 
-## Current state: prototype 0.3.0
+## What this branch implements
 
-Included in this first build:
+- Embedded VirtualApp engine from the VirtualXposed source tree, pinned as a Git submodule.
+- Separate virtual user for each clone, so each clone gets its own virtual app-data directory.
+- Clone an already-installed app by package name.
+- Import a single-file APK through Android's document picker.
+- Open a clone from PrivacyClone.
+- Remove a clone and its virtual-user data without uninstalling the original app from Android.
+- Local privacy diagnostics and settings dashboard.
+- A separate, network-free Virtualization Probe APK for comparing normal and virtual app contexts.
+- No analytics or remote telemetry code added by PrivacyClone.
 
-- Native Android managed-profile provisioning entry point with explicit user confirmation.
-- Profile-owner / managed-profile status checks.
-- A profile-aware installation path: on Android 9+ it can request installation of an existing package through the profile-owner API; on Android 8.x it opens the managed-profile Play Store for user-driven installation.
-- A launcher list for apps installed in the current profile.
-- A local audit of selected sensitive runtime permissions granted to apps visible in the current profile.
-- Per-app phone-permission controls for managed-profile apps that request `READ_PHONE_STATE`: a profile owner can deny requested Android Phone-group runtime permissions or return permission control to the user.
-- Local display of Android ID availability without displaying, storing, or transmitting its value.
-- VPN transport detection using Android network capabilities.
-- Sensor inventory and device / OS diagnostics.
-- A privacy configuration dashboard with a locally stored profile label and shortcuts to Android app-permission, VPN and location settings.
-- A read-only identity report showing the device name, manufacturer, model, Android release/build, and explicit non-access status for IMEI/MEID and SIM identifiers.
-- A minimal dark interface with a deep-red accent.
-- No analytics, no remote service, and no `INTERNET` permission.
-- GitHub Actions workflow to build and publish a debug APK artifact.
+This is an experimental migration branch, not a verified release. The GitHub Actions debug build has passed (run #43, commit 18c4118); real-device tests are still required.
 
-## Important Android limitations
+## Important compatibility limits
 
-PrivacyClone does not create a managed profile silently. It launches Android's own managed-profile provisioning flow and the user must approve the system screens. Provisioning may be unavailable if the device already has a managed profile, has management restrictions, or the manufacturer has disabled the relevant flow.
+- The pinned VirtualApp/VirtualXposed source is version 0.22.0 from 2022. Its upstream README describes support through Android 10; Android 8.1 is within that stated range, but this does not guarantee compatibility with every app or Huawei firmware.
+- The native library in this source build declares arm64-v8a and x86_64. A 32-bit-only runtime is not supported; the host checks process bitness, ABI support and the packaged native library before starting the engine.
+- VirtualApp's `libva++.so` is packaged for extraction on install because its I/O-redirection implementation requires a real file under Android's `nativeLibraryDir`. CI verifies the native library exists for ARM64 and x86_64 and is compressed for extraction.
+- Installed-app import stages the base APK and installed split APKs together. Manual document-picker import accepts one standalone APK file.
+- Apps that depend on Google Play services, Play Integrity, DRM, vendor frameworks, special native code, or newer Android APIs may fail to install or launch.
+- A virtual user is not an Android OS user. It does not create a separate kernel UID, SELinux domain, hardware device, or network connection. Treat this as an app-data container, not a security boundary against a hostile app.
+- Before launching a clone, PrivacyClone can request dangerous runtime permissions declared by that app. Android grants these to the PrivacyClone host package; they are not isolated per clone in this prototype and may be shared by other clones. Special permissions and app-specific service behavior are not fully mediated. The current prototype does not promise per-clone runtime-permission isolation, device-ID spoofing, IP separation, or undetectability. Cloned apps can still identify the physical device and may detect virtualization.
 
-Android 8.x supports a limited managed-profile configuration; do not expect unlimited parallel clones. A work profile is an Android user/profile boundary, not a virtual Android emulator. The same physical phone, hardware, operating-system build and network connection remain observable to apps where Android exposes them. Apps may also be able to recognize that they are running in a managed/work profile; this project does not conceal or falsify that state.
+## Permission and network disclosure
 
-PrivacyClone does not spoof identifiers, alter device properties, hook other apps, bypass app security checks, intercept arbitrary sensor calls, inspect encrypted network traffic, or promise clone undetectability. The profile label is a local label inside PrivacyClone only; it is not the Android device name. The settings shortcuts open Android system screens and do not silently change permissions or network settings.
+The embedded VirtualApp library manifest declares a broad permission set because it is designed to host many kinds of Android apps. This includes Internet, network state, location, contacts, camera, microphone, phone, SMS, storage, and other permissions.
 
-### Phone identifier permission control
+Those declarations become part of the merged PrivacyClone APK. They are required for compatibility with a broad range of cloned apps, but they mean the package is **not** a no-Internet-permission app. Android runtime-protected capabilities still depend on Android permission grants and the engine's compatibility behavior.
 
-On Android 8.1, ordinary apps generally need the runtime `READ_PHONE_STATE` permission to access telephony identifiers such as IMEI/MEID, IMSI and SIM serial through the standard Android APIs. When PrivacyClone is installed as the profile owner inside the managed profile, it can use `DevicePolicyManager.setPermissionGrantState()` to deny an app's requested Phone-group runtime permissions. The app list exposes this control only for apps that request `READ_PHONE_STATE`. Denying the group can break calling, SIM checks or other app features. The user can return the permission state to Android's default/user-managed state from PrivacyClone; this does not automatically grant the permission again.
+PrivacyClone adds no analytics or telemetry service and does not upload its own diagnostics. However, cloned apps may use the network as they normally would. Review the merged manifest and test permissions on the phone before trusting this build with sensitive accounts or data.
 
-This is permission-based access restriction, not spoofing. It cannot hide device model, manufacturer, Android release/build, hardware characteristics, IP/network metadata, or identifiers exposed through other channels. It cannot guarantee that an app has no way to fingerprint the device. The control is available only when PrivacyClone is the active profile owner; it does not manage apps in the personal profile.
+## Build on GitHub
 
-### Installing an app into the managed profile
+The project is built in GitHub Actions; Android Studio is not required on your computer.
 
-The prototype provides a package-name field. On Android 9+ it can call `DevicePolicyManager.installExistingPackage()` from the profile-owner context. That API was added in API 28 and is not available on Android 8.1 (API 27). On Android 8.x, the prototype opens the managed-profile Play Store so the user can install the app into that profile. Some apps may refuse to run in a managed profile. App-specific behavior needs testing.
+1. Open the virtual-container-migration branch.
+2. Open **Actions** and choose **Android CI**.
+3. Open the run triggered by the branch push.
+4. Download both **PrivacyClone-debug-apk** and **Virtualization-Probe-debug-apk** if the build succeeds. The second APK is a local-only test app; use it to compare normal and virtual execution.
 
-## Build an APK on GitHub (no Android Studio required)
+The workflow builds both the host and the independent probe APK. Follow [VIRTUALIZATION_DIAGNOSTICS.md](VIRTUALIZATION_DIAGNOSTICS.md) to compare a normal probe installation with its clone. The workflow checks out the VirtualXposed submodule recursively and installs Android SDK 28/35 plus NDK 21.4.7075529. It enables AIDL generation, adds the Android Gradle Plugin namespace and NDK pin to the legacy library checkout, and uses Robolectric's Android 8.1 framework JAR as a compile-only source of hidden framework API signatures. The JAR is not packaged into PrivacyClone. CI also removes the upstream tree's fully commented-out IJobScheduler AIDL file (the matching Java Binder interface is already checked in) and changes one reflection wrapper's generic type to raw List for compiler compatibility. All these build-time patches are applied only to the checked-out submodule during CI; they are not written back to upstream. The successful run uploaded the debug APK artifact; it is a debug build, not a signed release.
 
-1. Create a new GitHub repository named **PrivacyClone** under your account.
-2. Upload the contents of this project folder to the repository root (not the enclosing folder itself).
-3. Commit the files to the `main` branch.
-4. Open **Actions** and select **Build PrivacyClone APK**. A push to `main` also starts a build.
-5. Open the completed workflow run and download the `PrivacyClone-debug-apk` artifact.
-6. Extract `app-debug.apk` and install it on your Android phone. Allow installation from your browser or file manager when Android asks.
+## Device test plan
 
-The workflow uses JDK 17, Gradle 8.7, Android Gradle Plugin 8.6.1, compile SDK 35 and Android build tools 35.0.0. The Android Gradle Plugin 8.6 line requires Gradle 8.7 and JDK 17.
+Use a spare test app/account first. Do not start with a banking, work, or primary messaging account.
 
-## Test plan for the first device
+1. Install the APK on the ARM64 Android 8.1 phone.
+2. Open PrivacyClone and check that the virtual container reports initialized.
+3. Leave the package field empty and tap **SELECT OR CLONE INSTALLED APP**.
+4. Choose a small, non-sensitive installed app from the picker.
+5. Confirm that the clone appears in the list and opens.
+6. Sign into a test account and confirm its app data is separate from the original installation.
+7. Close and reopen PrivacyClone; confirm the clone remains listed and still launches.
+8. Create a second clone of the same app and confirm that its data/session is independent of the first clone.
+9. Remove one clone and verify that the original Android installation and the other clone remain.
 
-1. Install and launch PrivacyClone on the target phone.
-2. Check whether the Android managed-profile provisioning screen opens.
-3. Complete system provisioning only if Android offers it and the user agrees.
-4. Reopen PrivacyClone inside the managed profile and verify that it reports profile-owner status.
-5. Try installing an existing, non-critical test app by its package name.
-6. Confirm that its profile data and login session are separate from the personal profile.
-7. Reboot the phone and check the profile, app launch and notifications.
-8. Review the permission audit against Android Settings; this initial audit is informational and not a replacement for system permission controls.
+Also test APK import, notifications, background operation, reboot persistence, camera/microphone/location needs, and apps that use Google services. Record failures instead of assuming broad compatibility.
 
-## Technical details
+## Engine and licensing
 
-- Language: Java
-- Minimum SDK: 26 (Android 8.0)
-- Target SDK: 27 (initial device-compatibility prototype; raise and re-test before Play Store distribution)
-- Compile SDK: 35
-- Package: `com.privacyclone.app`
-- No third-party runtime libraries
+- Upstream source: https://github.com/android-hacker/VirtualXposed
+- Pinned upstream revision: 122beb371519cb2d221ce06756361aaa30e2674f
+- Upstream README: https://github.com/android-hacker/VirtualXposed/blob/vxp/README.md
+- VirtualApp licensing declaration: https://github.com/android-hacker/VirtualApp
 
-## Privacy model
+The upstream VirtualXposed README identifies GPL-3.0 and explicitly says commercial use is not allowed; it also points to a separate VirtualApp declaration. This branch is for personal evaluation only. Do not distribute a modified APK or use this in a commercial product until the applicable permissions and source-distribution obligations have been checked. Retain all upstream notices and source.
 
-All scans are performed on-device. The app has `ACCESS_NETWORK_STATE` only to detect whether the active network has VPN transport. It intentionally has no Internet permission and does not upload scan results. Android ID is read only to check whether a value is available; its actual value is never displayed, persisted or sent anywhere.
+## Main branch
+
+The main branch has not been changed by this migration work. All changes are on virtual-container-migration.

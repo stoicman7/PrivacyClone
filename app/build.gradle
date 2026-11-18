@@ -9,16 +9,24 @@ android {
     defaultConfig {
         applicationId 'com.privacyclone.app'
         minSdk 26
-        // API 27 keeps the first release focused on Android 8.0/8.1 compatibility.
-        // Raise this before any Play Store publication and re-test provisioning behavior.
         targetSdk 27
-        versionCode 3
-        versionName '0.3.0'
+        versionCode 5
+        versionName '0.5.0'
     }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    // VirtualApp's NativeEngine.enableIORedirect() opens libva++.so through
+    // ApplicationInfo.nativeLibraryDir. Uncompressed APK-native libraries may
+    // be loaded directly from the APK without creating that on-disk file.
+    // Force extraction so the engine's filesystem-path requirement is satisfied.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     buildTypes {
@@ -27,4 +35,8 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+}
+
+dependencies {
+    implementation project(':virtualapp')
 }

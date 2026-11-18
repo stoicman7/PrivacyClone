@@ -2,8 +2,6 @@ package com.privacyclone.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.admin.DevicePolicyManager;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
@@ -20,7 +18,10 @@ import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.UserManager;
+import android.os.AsyncTask;
+import android.os.Process;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
@@ -43,13 +44,26 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.util.UUID;
+
+import com.lody.virtual.client.core.InstallStrategy;
+import com.lody.virtual.client.core.VirtualCore;
+import com.lody.virtual.client.ipc.VActivityManager;
+import com.lody.virtual.os.VUserInfo;
+import com.lody.virtual.os.VUserManager;
+import com.lody.virtual.remote.InstallResult;
+import com.lody.virtual.remote.InstalledAppInfo;
 
 /**
- * Privacy-first Android 8.x prototype.
- * All inspection is performed locally. No INTERNET permission is declared.
+ * Local-first Android app cloner prototype.
+ * The virtual engine supplies network capability for apps that the user clones.
  */
 public final class PrivacyCloneActivity extends Activity {
-    private static final int REQUEST_PROVISION_PROFILE = 4102;
+    private static final int REQUEST_IMPORT_APK = 4201;
+    private static final int REQUEST_CLONE_PERMISSIONS = 4202;
     private static final int BG = Color.rgb(11, 13, 16);
     private static final int PANEL = Color.rgb(22, 25, 30);
     private static final int PANEL_ALT = Color.rgb(29, 33, 39);
@@ -59,13 +73,10 @@ public final class PrivacyCloneActivity extends Activity {
     private static final int GREEN = Color.rgb(91, 176, 126);
     private static final int AMBER = Color.rgb(218, 164, 77);
 
-    private DevicePolicyManager devicePolicyManager;
-    private UserManager userManager;
     private LinearLayout root;
     private LinearLayout content;
     private TextView profileStatus;
     private TextView profileDetails;
-    private Button provisionButton;
     private EditText packageInput;
     private EditText profileLabelInput;
     private LinearLayout installedAppsContainer;
@@ -74,30 +85,65 @@ public final class PrivacyCloneActivity extends Activity {
     private TextView permissionCountValue;
     private TextView vpnValue;
     private TextView sensorValue;
+    private AppEntry pendingCloneLaunch;
+    private final Handler startupHandler = new Handler(Looper.getMainLooper());
+    private final Runnable startupRefresh = new Runnable() {
+        @Override
+        public void run() {
+            if (isFinishing()) return;
+            refreshProfileStatus();
+            if (PrivacyCloneApplication.isReady()) {
+                refreshInstalledApps();
+            } else if (PrivacyCloneApplication.isStartupPending()) {
+                startupHandler.postDelayed(this, 250L);
+            } else {
+                refreshInstalledApps();
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        devicePolicyManager = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
-        userManager = (UserManager) getSystemService(Context.USER_SERVICE);
         buildInterface();
         refreshAll();
+        if (PrivacyCloneApplication.isStartupPending()) {
+            startupHandler.postDelayed(startupRefresh, 250L);
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (content != null) refreshAll();
+        if (content != null) {
+            refreshAll();
+            if (PrivacyCloneApplication.isStartupPending()) {
+                startupHandler.postDelayed(startupRefresh, 250L);
+            }
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        startupHandler.removeCallbacks(startupRefresh);
+        super.onDestroy();
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_PROVISION_PROFILE) {
-            refreshAll();
-            if (resultCode != RESULT_OK) {
-                toast("Profile setup was cancelled or Android could not complete it.");
-            }
+        if (requestCode == REQUEST_IMPORT_APK && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            importApkFromUri(data.getData());
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CLONE_PERMISSIONS && pendingCloneLaunch != null) {
+            AppEntry entry = pendingCloneLaunch;
+            pendingCloneLaunch = null;
+            launchCloneNow(entry);
         }
     }
 
@@ -139,7 +185,7 @@ public final class PrivacyCloneActivity extends Activity {
         addPermissionCard();
         addDiagnosticsCard();
 
-        TextView footer = text("LOCAL-FIRST DESIGN  •  NO ANALYTICS  •  NO INTERNET ACCESS", 10, MUTED, true);
+        TextView footer = text("LOCAL-FIRST DESIGN  •  NO ANALYTICS  •  CLONED APPS MAY USE THE NETWORK", 10, MUTED, true);
         footer.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams footerParams = params(-1, -2);
         footerParams.topMargin = dp(24);
@@ -148,29 +194,23 @@ public final class PrivacyCloneActivity extends Activity {
 
     private void addProfileCard() {
         LinearLayout card = card();
-        sectionTitle(card, "PROFILE STATUS", "Android-managed isolation");
+        sectionTitle(card, "VIRTUAL CONTAINER", "Separate app data without an Android Work Profile");
         profileStatus = text("Checking profile…", 19, TEXT, true);
         LinearLayout.LayoutParams statusParams = params(-1, -2);
         statusParams.topMargin = dp(13);
         card.addView(profileStatus, statusParams);
-        profileDetails = text("Checking Android profile capabilities.", 12, MUTED, false);
+        profileDetails = text("Checking the local virtual-app engine.", 12, MUTED, false);
         LinearLayout.LayoutParams detailsParams = params(-1, -2);
         detailsParams.topMargin = dp(6);
         card.addView(profileDetails, detailsParams);
-
-        provisionButton = button("SET UP WORK PROFILE");
-        LinearLayout.LayoutParams buttonParams = params(-1, dp(48));
-        buttonParams.topMargin = dp(16);
-        card.addView(provisionButton, buttonParams);
-        provisionButton.setOnClickListener(v -> showProvisioningExplanation());
         addCard(card);
     }
 
     private void addCloneCard() {
         LinearLayout card = card();
-        sectionTitle(card, "CLONE MANAGER", "Install another per-profile instance of an app");
+        sectionTitle(card, "CLONE MANAGER", "Import installed apps or APK files into this phone's virtual container");
 
-        TextView note = text("Android keeps app data separate between personal and managed profiles. It uses the work-profile Play Store on Android 8.x and the profile-owner install API on Android 9+; it does not modify or patch APKs. For apps requesting READ_PHONE_STATE, use the per-app control below to deny access to Android's Phone permission group.", 12, MUTED, false);
+        TextView note = text("Each clone is placed in its own virtual user with a separate app-data directory. Installed apps are imported with their base APK and available configuration or feature splits. This is not an Android Work Profile or an OS security boundary. Runtime permissions are currently granted to the PrivacyClone host and may be shared across clones. Apps that depend on Google Play services or newer Android APIs may still have compatibility limits.", 12, MUTED, false);
         LinearLayout.LayoutParams noteParams = params(-1, -2);
         noteParams.topMargin = dp(12);
         card.addView(note, noteParams);
@@ -188,11 +228,17 @@ public final class PrivacyCloneActivity extends Activity {
         inputParams.topMargin = dp(15);
         card.addView(packageInput, inputParams);
 
-        Button install = button("INSTALL IN WORK PROFILE");
+        Button install = button("SELECT OR CLONE INSTALLED APP");
         LinearLayout.LayoutParams installParams = params(-1, dp(46));
         installParams.topMargin = dp(10);
         card.addView(install, installParams);
-        install.setOnClickListener(v -> installIntoManagedProfile());
+        install.setOnClickListener(v -> cloneInstalledApp());
+
+        Button importApk = button("IMPORT APK FILE");
+        LinearLayout.LayoutParams importParams = params(-1, dp(46));
+        importParams.topMargin = dp(8);
+        card.addView(importApk, importParams);
+        importApk.setOnClickListener(v -> chooseApkFile());
 
         appCountValue = text("—", 13, TEXT, true);
         LinearLayout.LayoutParams countParams = params(-1, -2);
@@ -208,20 +254,25 @@ public final class PrivacyCloneActivity extends Activity {
 
     private void addPrivacyCard() {
         LinearLayout card = card();
-        sectionTitle(card, "PRIVACY OVERVIEW", "Signals visible from this Android profile");
-        addMetric(card, "Profile-scoped Android ID", "Checking…");
+        sectionTitle(card, "PRIVACY OVERVIEW", "What the host device exposes");
+        addMetric(card, "Host Android ID availability", "Checking…");
         addMetric(card, "VPN transport", "Checking…");
         addMetric(card, "Available device sensors", "Checking…");
-        TextView disclaimer = text("A work profile can separate app data and some profile-scoped identifiers. It cannot hide the phone's real model, OS build, hardware characteristics or public network address from every app.", 11, MUTED, false);
+        TextView disclaimer = text("Virtual clones have separate app data, but they still run on this physical phone. This engine does not guarantee separate hardware identifiers, network identity, or invisibility from app-side virtualization checks.", 11, MUTED, false);
         LinearLayout.LayoutParams p = params(-1, -2);
         p.topMargin = dp(13);
         card.addView(disclaimer, p);
+
+        TextView permissionNotice = text("The embedded engine declares broad permissions, including Internet and app capabilities such as location, contacts, camera, microphone, phone and SMS. Cloned apps may use the network. Runtime grants requested here belong to PrivacyClone and may be shared across clones; PrivacyClone does not upload its own diagnostics.", 11, MUTED, false);
+        LinearLayout.LayoutParams permissionParams = params(-1, -2);
+        permissionParams.topMargin = dp(10);
+        card.addView(permissionNotice, permissionParams);
         addCard(card);
     }
 
     private void addConfigurationCard() {
         LinearLayout card = card();
-        sectionTitle(card, "PRIVACY CONFIGURATION", "Profile controls that Android actually supports");
+        sectionTitle(card, "PRIVACY CONFIGURATION", "Local settings for this virtual workspace");
 
         TextView labelHelp = text(
                 "Choose a local label to distinguish this PrivacyClone workspace. It changes only the label shown here; it does not rename the phone or alter identifiers seen by other apps.",
@@ -232,7 +283,7 @@ public final class PrivacyCloneActivity extends Activity {
 
         profileLabelInput = new EditText(this);
         profileLabelInput.setSingleLine(true);
-        profileLabelInput.setHint("For example: Work profile");
+        profileLabelInput.setHint("For example: Personal clones");
         profileLabelInput.setTextColor(TEXT);
         profileLabelInput.setHintTextColor(MUTED);
         profileLabelInput.setTextSize(14);
@@ -296,7 +347,7 @@ public final class PrivacyCloneActivity extends Activity {
 
     private void addPermissionCard() {
         LinearLayout card = card();
-        sectionTitle(card, "PERMISSION AUDIT", "Sensitive permissions granted in this profile");
+        sectionTitle(card, "HOST PERMISSION AUDIT", "Sensitive permissions granted to Android-installed apps");
         permissionCountValue = text("Scanning…", 13, TEXT, true);
         LinearLayout.LayoutParams countParams = params(-1, -2);
         countParams.topMargin = dp(13);
@@ -328,10 +379,14 @@ public final class PrivacyCloneActivity extends Activity {
         addKeyValue(card, "Model", Build.MODEL);
         addKeyValue(card, "Android version", Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
         addKeyValue(card, "Build", Build.DISPLAY);
+        addKeyValue(card, "Android app process", Process.is64Bit() ? "64-bit" : "32-bit");
+        addKeyValue(card, "Supported ABIs", Arrays.toString(Build.SUPPORTED_ABIS));
+        File virtualNativeLibrary = new File(getApplicationInfo().nativeLibraryDir, "libva++.so");
+        addKeyValue(card, "VirtualApp native engine", virtualNativeLibrary.isFile() ? "libva++.so present" : "libva++.so MISSING");
         addKeyValue(card, "IMEI / MEID", "Not accessed by PrivacyClone");
         addKeyValue(card, "SIM identifiers / number", "Not accessed by PrivacyClone");
         addKeyValue(card, "Android ID", "Availability only; value is not collected");
-        addKeyValue(card, "App permissions", "No phone-state or contacts permission requested");
+        addKeyValue(card, "Container permissions", "Virtualized apps may request capabilities through the host");
         TextView warning = text(
                 "This report does not change what other apps can see. Device model, Android build, hardware traits and SIM/network information may still be available to apps under Android's rules. The IMEI and SIM values are deliberately not read, stored or displayed.",
                 11, MUTED, false);
@@ -359,304 +414,453 @@ public final class PrivacyCloneActivity extends Activity {
     }
 
     private void refreshProfileStatus() {
-        boolean isOwner = devicePolicyManager != null && devicePolicyManager.isProfileOwnerApp(getPackageName());
-        boolean isManaged = userManager != null && userManager.isManagedProfile();
-        if (provisionButton != null) {
-            provisionButton.setEnabled(!isOwner);
-            provisionButton.setText(isOwner ? "WORK PROFILE ACTIVE" : "SET UP WORK PROFILE");
-            provisionButton.setAlpha(isOwner ? 0.55f : 1.0f);
-        }
-        if (isOwner && isManaged) {
-            profileStatus.setText("Work profile is active");
+        boolean ready = PrivacyCloneApplication.isReady();
+        if (ready) {
+            profileStatus.setText("Virtual container initialized");
             profileStatus.setTextColor(GREEN);
-            profileDetails.setText("PrivacyClone is the profile owner in this managed profile. App data and profile-scoped settings are managed separately from your personal profile.");
-        } else if (isOwner) {
-            profileStatus.setText("Profile owner detected");
-            profileStatus.setTextColor(GREEN);
-            profileDetails.setText("Android granted profile-owner status. The current user context is not reported as a managed profile; inspect device settings before continuing.");
-        } else {
-            profileStatus.setText("Work profile not configured");
+            profileDetails.setText("Clones run inside PrivacyClone. Each clone gets a separate virtual user and app-data directory; no Android Work Profile is created.");
+        } else if (PrivacyCloneApplication.isStartupPending()) {
+            profileStatus.setText("Starting virtual container…");
             profileStatus.setTextColor(AMBER);
-            profileDetails.setText("Set-up is user-confirmed and depends on the phone's Android provisioning support. An existing work profile may prevent creating another one.");
+            profileDetails.setText("Starting the VirtualApp server and checking its Binder connection.");
+        } else {
+            profileStatus.setText("Virtual container unavailable");
+            profileStatus.setTextColor(AMBER);
+            String error = PrivacyCloneApplication.getStartupError();
+            profileDetails.setText(error == null || error.trim().isEmpty()
+                    ? "The virtual engine did not initialize. Restart PrivacyClone and check the build/device compatibility."
+                    : "Engine startup failed: " + error);
         }
     }
 
-    private void showProvisioningExplanation() {
-        new AlertDialog.Builder(this)
-                .setTitle("Set up a managed profile")
-                .setMessage("Android will open its own profile-provisioning screen. Read each system prompt carefully. This requires your confirmation and may be unavailable if the device already has a managed profile, is restricted by the manufacturer, or has device-management policies. PrivacyClone cannot create a profile silently.")
-                .setNegativeButton("CANCEL", null)
-                .setPositiveButton("CONTINUE", (dialog, which) -> requestManagedProfile())
-                .show();
-    }
-
-    private void requestManagedProfile() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            toast("Managed profiles require Android 5.0 or newer.");
-            return;
-        }
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
-                    && devicePolicyManager != null
-                    && !devicePolicyManager.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE)) {
-                toast("Android currently does not allow a new managed profile on this device.");
-                return;
-            }
-            Intent intent = new Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE);
-            ComponentName admin = new ComponentName(this, PrivacyDeviceAdminReceiver.class);
-            intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin);
-            startActivityForResult(intent, REQUEST_PROVISION_PROFILE);
-        } catch (Exception e) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Provisioning unavailable")
-                    .setMessage("This Android build did not provide a usable managed-profile provisioning activity. No profile was created. You can still use the local diagnostics in PrivacyClone.")
-                    .setPositiveButton("OK", null)
-                    .show();
-        }
-    }
-
-    private void installIntoManagedProfile() {
-        if (devicePolicyManager == null || !devicePolicyManager.isProfileOwnerApp(getPackageName())) {
-            toast("Set up the managed profile first.");
+    private void cloneInstalledApp() {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast(PrivacyCloneApplication.isStartupPending()
+                    ? "The virtual container is still starting. Try again in a moment."
+                    : "The virtual container is not ready. Check the status above.");
             return;
         }
         String packageName = packageInput.getText().toString().trim();
+        if (packageName.isEmpty()) {
+            showInstalledAppPicker();
+            return;
+        }
         if (!packageName.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) {
             packageInput.setError("Enter a valid Android package name");
             return;
         }
-        hideKeyboard();
-        if (Build.VERSION.SDK_INT >= 28) {
-            try {
-                boolean installed = devicePolicyManager.installExistingPackage(
-                        new ComponentName(this, PrivacyDeviceAdminReceiver.class), packageName);
-                if (installed) {
-                    toast("Install request completed. Refreshing app list.");
-                    refreshInstalledApps();
-                } else {
-                    toast("Package is not available for installation on this device.");
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(packageName, 0);
+            if (info.applicationInfo == null || info.applicationInfo.sourceDir == null) {
+                toast("Android did not expose the installed app's APK path.");
+                return;
+            }
+            String label = String.valueOf(info.applicationInfo.loadLabel(getPackageManager()));
+            String importPath = prepareInstalledApkSet(packageName, info);
+            if (importPath == null) {
+                toast("Android exposed the app, but its complete APK set could not be prepared. Check available storage and try again.");
+                return;
+            }
+            hideKeyboard();
+            installVirtualClone(importPath, label, packageName);
+        } catch (PackageManager.NameNotFoundException e) {
+            packageInput.setError("This app is not installed on the phone");
+        } catch (Exception e) {
+            toast("Could not read the installed app. Try importing its APK.");
+        }
+    }
+
+    private void showInstalledAppPicker() {
+        try {
+            Intent launcher = new Intent(Intent.ACTION_MAIN);
+            launcher.addCategory(Intent.CATEGORY_LAUNCHER);
+            List<ResolveInfo> activities = getPackageManager().queryIntentActivities(launcher, 0);
+            Collections.sort(activities, (a, b) ->
+                    String.valueOf(a.loadLabel(getPackageManager())).toLowerCase(Locale.US)
+                            .compareTo(String.valueOf(b.loadLabel(getPackageManager())).toLowerCase(Locale.US)));
+
+            List<ResolveInfo> choices = new ArrayList<>();
+            Set<String> packages = new HashSet<>();
+            for (ResolveInfo info : activities) {
+                if (info.activityInfo == null) continue;
+                String packageName = info.activityInfo.packageName;
+                if (packageName.equals(getPackageName()) || !packages.add(packageName)) continue;
+                choices.add(info);
+            }
+            if (choices.isEmpty()) {
+                toast("No launchable installed apps were found.");
+                return;
+            }
+            String[] labels = new String[choices.size()];
+            for (int i = 0; i < choices.size(); i++) {
+                ResolveInfo info = choices.get(i);
+                labels[i] = String.valueOf(info.loadLabel(getPackageManager()));
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("Choose an installed app to clone")
+                    .setItems(labels, (dialog, which) -> {
+                        String packageName = choices.get(which).activityInfo.packageName;
+                        packageInput.setText(packageName);
+                        cloneInstalledApp();
+                    })
+                    .setNegativeButton("CANCEL", null)
+                    .show();
+        } catch (Exception e) {
+            toast("Android could not list installed apps.");
+        }
+    }
+
+    private void chooseApkFile() {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready. Check the status above and restart the app.");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/vnd.android.package-archive");
+        try {
+            startActivityForResult(intent, REQUEST_IMPORT_APK);
+        } catch (Exception e) {
+            toast("The Android file picker is not available.");
+        }
+    }
+
+    private void importApkFromUri(final Uri uri) {
+        new AsyncTask<Void, Void, File>() {
+            @Override
+            protected File doInBackground(Void... ignored) {
+                File directory = new File(getFilesDir(), "apk-imports");
+                if (!directory.exists() && !directory.mkdirs()) return null;
+                File output = new File(directory, UUID.randomUUID().toString() + ".apk");
+                try (InputStream input = getContentResolver().openInputStream(uri);
+                     FileOutputStream stream = new FileOutputStream(output)) {
+                    if (input == null) return null;
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) stream.write(buffer, 0, count);
+                    return output;
+                } catch (Exception e) {
+                    output.delete();
+                    return null;
                 }
-            } catch (SecurityException e) {
-                toast("Android denied this install request.");
-            } catch (Exception e) {
-                toast("Could not install this package in the managed profile.");
             }
-        } else {
-            // DevicePolicyManager.installExistingPackage() was added in API 28.
-            // On Android 8.x the supported user-driven route is the Play Store
-            // installed inside the managed profile.
+
+            @Override
+            protected void onPostExecute(File apkFile) {
+                if (apkFile == null || !apkFile.isFile() || apkFile.length() == 0) {
+                    toast("The selected APK could not be read.");
+                    return;
+                }
+                PackageInfo archive = getPackageManager().getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);
+                if (archive == null || archive.packageName == null) {
+                    apkFile.delete();
+                    toast("The selected file is not a valid APK.");
+                    return;
+                }
+                archive.applicationInfo.sourceDir = apkFile.getAbsolutePath();
+                archive.applicationInfo.publicSourceDir = apkFile.getAbsolutePath();
+                String label = String.valueOf(archive.applicationInfo.loadLabel(getPackageManager()));
+                installVirtualClone(apkFile.getAbsolutePath(), label, null);
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /**
+     * Stage an installed package as a PackageParser cluster: base.apk plus split_<name>.apk.
+     * VirtualApp's PackageParserEx parses the directory and preserves splitCodePaths.
+     */
+    private String prepareInstalledApkSet(String packageName, PackageInfo info) {
+        ApplicationInfo app = info.applicationInfo;
+        if (app == null || app.sourceDir == null) return null;
+
+        String[] splitPaths = app.splitSourceDirs;
+        if (splitPaths == null || splitPaths.length == 0) return app.sourceDir;
+
+        File root = new File(getFilesDir(), "installed-apk-sets");
+        File setDir = new File(root, packageName + "-" + UUID.randomUUID().toString());
+        if (!setDir.mkdirs()) return null;
+
+        try {
+            copyApkFile(new File(app.sourceDir), new File(setDir, "base.apk"));
+            String[] splitNames = info.splitNames;
+            for (int i = 0; i < splitPaths.length; i++) {
+                String splitName = splitNames != null && i < splitNames.length
+                        && splitNames[i] != null && !splitNames[i].trim().isEmpty()
+                        ? splitNames[i] : splitNameFromPath(splitPaths[i]);
+                File destination = new File(setDir, "split_" + splitName + ".apk");
+                copyApkFile(new File(splitPaths[i]), destination);
+            }
+            return setDir.getAbsolutePath();
+        } catch (Exception e) {
+            deleteRecursively(setDir);
+            return null;
+        }
+    }
+
+    private String splitNameFromPath(String path) {
+        String name = new File(path).getName();
+        if (name.endsWith(".apk")) name = name.substring(0, name.length() - 4);
+        if (name.startsWith("split_")) name = name.substring("split_".length());
+        if (name.isEmpty()) throw new IllegalArgumentException("Missing split name");
+        return name;
+    }
+
+    private void copyApkFile(File source, File destination) throws java.io.IOException {
+        if (!source.isFile() || source.length() == 0) {
+            throw new java.io.IOException("APK file is missing: " + source.getName());
+        }
+        try (InputStream input = new java.io.FileInputStream(source);
+             FileOutputStream output = new FileOutputStream(destination)) {
+            byte[] buffer = new byte[16384];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            output.getFD().sync();
+        }
+    }
+
+    private void deleteRecursively(File file) {
+        if (file == null || !file.exists()) return;
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        }
+        file.delete();
+    }
+
+    private void installVirtualClone(final String apkPath, final String appLabel, final String packageNameHint) {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready.");
+            return;
+        }
+        appCountValue.setText("Importing " + appLabel + "…");
+        new AsyncTask<Void, Void, CloneTaskResult>() {
+            @Override
+            protected CloneTaskResult doInBackground(Void... ignored) {
+                String stage = "connect to the VirtualApp server";
+                try {
+                    if (!PrivacyCloneApplication.ensureServerReady()) {
+                        return CloneTaskResult.failure("Server connection failed: "
+                                + String.valueOf(PrivacyCloneApplication.getStartupError()));
+                    }
+                    VirtualCore core = VirtualCore.get();
+                    String packageName = packageNameHint;
+                    if (packageName == null) {
+                        stage = "read APK metadata";
+                        PackageInfo archive = getPackageManager().getPackageArchiveInfo(apkPath, 0);
+                        if (archive == null || archive.packageName == null) {
+                            return CloneTaskResult.failure("APK metadata could not be read.");
+                        }
+                        packageName = archive.packageName;
+                    }
+                    stage = "check whether the package is already imported";
+                    InstalledAppInfo existing = core.getInstalledAppInfo(packageName, 0);
+                    if (existing == null) {
+                        stage = "parse and import the APK set";
+                        InstallResult installed = core.installPackage(
+                                apkPath, InstallStrategy.COMPARE_VERSION | InstallStrategy.SKIP_DEX_OPT);
+                        if (installed == null || !installed.isSuccess) {
+                            return CloneTaskResult.failure(installed == null || installed.error == null
+                                    ? "The virtual engine rejected this APK set."
+                                    : "APK import failed: " + installed.error);
+                        }
+                    }
+                    stage = "create an isolated virtual user";
+                    VUserInfo user = VUserManager.get().createUser(appLabel + " clone", VUserInfo.FLAG_ADMIN);
+                    if (user == null) return CloneTaskResult.failure("VirtualApp could not create a clone user.");
+                    stage = "install the imported package into the virtual user";
+                    if (!core.installPackageAsUser(user.id, packageName)) {
+                        VUserManager.get().removeUser(user.id);
+                        return CloneTaskResult.failure("Package import succeeded, but installPackageAsUser returned false.");
+                    }
+                    return CloneTaskResult.success(new AppEntry(appLabel, packageName, user.id));
+                } catch (Throwable e) {
+                    String detail = e.getMessage() == null ? "" : ": " + e.getMessage();
+                    return CloneTaskResult.failure("Failure at [" + stage + "]: "
+                            + e.getClass().getSimpleName() + detail);
+                }
+            }
+
+            @Override
+            protected void onPostExecute(CloneTaskResult result) {
+                File stagedRoot = new File(getFilesDir(), "installed-apk-sets");
+                File stagedSet = new File(apkPath);
+                if (packageNameHint != null && stagedSet.isDirectory()
+                        && stagedSet.getAbsolutePath().startsWith(stagedRoot.getAbsolutePath() + File.separator)) {
+                    deleteRecursively(stagedSet);
+                }
+                if (result == null || result.entry == null) {
+                    toast(result == null ? "Import failed." : result.message);
+                    refreshInstalledApps();
+                    return;
+                }
+                saveCloneEntry(result.entry);
+                toast(appLabel + " was added as a separate clone.");
+                refreshInstalledApps();
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    private void saveCloneEntry(AppEntry entry) {
+        SharedPreferences preferences = getSharedPreferences("privacyclone_instances", MODE_PRIVATE);
+        Set<String> saved = new HashSet<>(preferences.getStringSet("clones", Collections.<String>emptySet()));
+        saved.add(entry.userId + "|" + entry.packageName + "|" + entry.label.replace("|", ""));
+        preferences.edit().putStringSet("clones", saved).apply();
+    }
+
+    private List<AppEntry> loadCloneEntries() {
+        SharedPreferences preferences = getSharedPreferences("privacyclone_instances", MODE_PRIVATE);
+        Set<String> saved = preferences.getStringSet("clones", Collections.<String>emptySet());
+        List<AppEntry> entries = new ArrayList<>();
+        for (String item : saved) {
+            String[] parts = item.split("\\|", 3);
+            if (parts.length != 3) continue;
             try {
-                Intent market = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + packageName));
-                market.setPackage("com.android.vending");
-                startActivity(market);
-            } catch (Exception e) {
-                new AlertDialog.Builder(this)
-                        .setTitle("Install from the work profile")
-                        .setMessage("Android 8.1 does not provide the profile-owner API needed to install an existing personal-profile package directly. Open the Play Store from the work-profile launcher, sign in there if needed, and install the app into the work profile. This keeps the installation and app data under Android's normal profile controls.")
-                        .setPositiveButton("OK", null)
-                        .show();
+                entries.add(new AppEntry(parts[2], parts[1], Integer.parseInt(parts[0])));
+            } catch (NumberFormatException ignored) { }
+        }
+        return entries;
+    }
+
+    private void removeClone(final AppEntry entry) {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready; the clone cannot be removed right now.");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Remove clone?")
+                .setMessage("This removes the virtual user and its local app data for " + entry.label + ". The original app installed on Android is not removed.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("REMOVE", (dialog, which) -> {
+                    boolean removed = VUserManager.get().removeUser(entry.userId);
+                    SharedPreferences preferences = getSharedPreferences("privacyclone_instances", MODE_PRIVATE);
+                    Set<String> saved = new HashSet<>(preferences.getStringSet("clones", Collections.<String>emptySet()));
+                    saved.remove(entry.userId + "|" + entry.packageName + "|" + entry.label.replace("|", ""));
+                    preferences.edit().putStringSet("clones", saved).apply();
+                    refreshInstalledApps();
+                    toast(removed ? "Clone and its virtual user data were removed." : "The virtual user could not be removed.");
+                })
+                .show();
+    }
+
+    private void openClone(AppEntry entry) {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready; the clone cannot be opened.");
+            return;
+        }
+        List<String> missing = getMissingClonePermissions(entry);
+        if (missing.isEmpty()) {
+            launchCloneNow(entry);
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Permissions requested by this clone")
+                .setMessage("The cloned app requests: " + join(missing) + ". Android will grant these permissions to PrivacyClone, which hosts the virtual apps. These grants are not isolated per clone in this prototype and may be shared by other clones. You can skip this and try launching with those permissions denied.")
+                .setNegativeButton("SKIP", (dialog, which) -> launchCloneNow(entry))
+                .setPositiveButton("CONTINUE", (dialog, which) -> {
+                    pendingCloneLaunch = entry;
+                    requestPermissions(missing.toArray(new String[0]), REQUEST_CLONE_PERMISSIONS);
+                })
+                .show();
+    }
+
+    private List<String> getMissingClonePermissions(AppEntry entry) {
+        List<String> missing = new ArrayList<>();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return missing;
+        try {
+            InstalledAppInfo installed = VirtualCore.get().getInstalledAppInfo(entry.packageName, 0);
+            if (installed == null) return missing;
+            PackageInfo virtualPackage = installed.getPackageInfo(entry.userId);
+            if (virtualPackage == null || virtualPackage.requestedPermissions == null) return missing;
+
+            PackageInfo hostPackage = getPackageManager().getPackageInfo(getPackageName(), PackageManager.GET_PERMISSIONS);
+            Set<String> hostDeclared = new HashSet<>();
+            if (hostPackage.requestedPermissions != null) {
+                hostDeclared.addAll(Arrays.asList(hostPackage.requestedPermissions));
             }
+
+            for (String permission : virtualPackage.requestedPermissions) {
+                if (!hostDeclared.contains(permission) || checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
+                    continue;
+                }
+                try {
+                    PermissionInfo permissionInfo = getPackageManager().getPermissionInfo(permission, 0);
+                    int protection = permissionInfo.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE;
+                    if (protection == PermissionInfo.PROTECTION_DANGEROUS && !missing.contains(permission)) {
+                        missing.add(permission);
+                    }
+                } catch (PackageManager.NameNotFoundException ignored) {
+                    // Custom permissions are not requested through Android's runtime dialog.
+                }
+            }
+        } catch (Exception ignored) {
+            // Permission discovery must not prevent the user from launching the clone.
+        }
+        return missing;
+    }
+
+    private void launchCloneNow(AppEntry entry) {
+        try {
+            Intent launch = VirtualCore.get().getLaunchIntent(entry.packageName, entry.userId);
+            if (launch == null) {
+                toast("This clone has no launchable activity.");
+                return;
+            }
+            VActivityManager.get().startActivity(launch, entry.userId);
+        } catch (Throwable e) {
+            String detail = e.getMessage() == null ? "" : ": " + e.getMessage();
+            toast("Launch failed: " + e.getClass().getSimpleName() + detail);
         }
     }
 
     private void refreshInstalledApps() {
         if (installedAppsContainer == null) return;
         installedAppsContainer.removeAllViews();
-        try {
-            Intent launcher = new Intent(Intent.ACTION_MAIN, null);
-            launcher.addCategory(Intent.CATEGORY_LAUNCHER);
-            List<ResolveInfo> activities = getPackageManager().queryIntentActivities(launcher, 0);
-            Set<String> packages = new HashSet<>();
-            List<AppEntry> entries = new ArrayList<>();
-            for (ResolveInfo info : activities) {
-                if (info.activityInfo == null) continue;
-                String pkg = info.activityInfo.packageName;
-                if (pkg.equals(getPackageName()) || !packages.add(pkg)) continue;
-                String label = String.valueOf(info.loadLabel(getPackageManager()));
-                boolean requestsPhoneState = appRequestsPermission(pkg, "android.permission.READ_PHONE_STATE");
-                entries.add(new AppEntry(label, pkg, requestsPhoneState));
+        if (!PrivacyCloneApplication.isReady()) {
+            if (PrivacyCloneApplication.isStartupPending()) {
+                appCountValue.setText("Starting virtual container…");
+                addMutedLine(installedAppsContainer, "Waiting for the VirtualApp server to respond.");
+            } else {
+                appCountValue.setText("Virtual container unavailable");
+                addMutedLine(installedAppsContainer, "Cloning is disabled until the virtual engine starts successfully.");
             }
-            Collections.sort(entries, (a, b) -> a.label.toLowerCase(Locale.US).compareTo(b.label.toLowerCase(Locale.US)));
-            appCountValue.setText(entries.size() + " launchable apps visible in this profile");
-            if (entries.isEmpty()) {
-                addMutedLine(installedAppsContainer, "No other launchable apps were found in this profile.");
-            }
-            int limit = Math.min(entries.size(), 8);
-            for (int i = 0; i < limit; i++) {
-                AppEntry entry = entries.get(i);
-                LinearLayout appRow = new LinearLayout(this);
-                appRow.setOrientation(LinearLayout.VERTICAL);
-                appRow.setPadding(dp(10), dp(9), dp(10), dp(10));
-                appRow.setBackground(round(PANEL_ALT, 8, Color.TRANSPARENT));
-                LinearLayout.LayoutParams p = params(-1, -2);
-                p.bottomMargin = dp(7);
-                installedAppsContainer.addView(appRow, p);
-
-                TextView title = text(entry.label, 13, TEXT, true);
-                appRow.addView(title, params(-1, -2));
-                TextView packageName = text(entry.packageName, 10, MUTED, false);
-                LinearLayout.LayoutParams packageParams = params(-1, -2);
-                packageParams.topMargin = dp(3);
-                appRow.addView(packageName, packageParams);
-
-                if (entry.requestsPhoneState) {
-                    TextView phoneStatus = text(getPhonePermissionStatus(entry.packageName), 11, MUTED, false);
-                    LinearLayout.LayoutParams statusParams = params(-1, -2);
-                    statusParams.topMargin = dp(8);
-                    appRow.addView(phoneStatus, statusParams);
-
-                    boolean policyBlocked = isPhonePermissionPolicyBlocked(entry.packageName);
-                    Button phoneControl = button(policyBlocked ? "RESTORE USER CONTROL" : "BLOCK PHONE IDENTIFIER ACCESS");
-                    LinearLayout.LayoutParams controlParams = params(-1, dp(40));
-                    controlParams.topMargin = dp(7);
-                    appRow.addView(phoneControl, controlParams);
-                    phoneControl.setEnabled(devicePolicyManager != null
-                            && devicePolicyManager.isProfileOwnerApp(getPackageName()));
-                    phoneControl.setAlpha(phoneControl.isEnabled() ? 1.0f : 0.45f);
-                    phoneControl.setOnClickListener(v -> {
-                        if (isPhonePermissionPolicyBlocked(entry.packageName)) {
-                            restorePhonePermissionControl(entry.packageName);
-                        } else {
-                            confirmBlockPhoneIdentifiers(entry);
-                        }
-                    });
-                } else {
-                    TextView noPhonePermission = text("Does not request READ_PHONE_STATE", 10, GREEN, false);
-                    LinearLayout.LayoutParams statusParams = params(-1, -2);
-                    statusParams.topMargin = dp(7);
-                    appRow.addView(noPhonePermission, statusParams);
-                }
-
-                TextView launch = text("OPEN APP", 10, MUTED, true);
-                launch.setGravity(Gravity.RIGHT);
-                LinearLayout.LayoutParams launchParams = params(-1, -2);
-                launchParams.topMargin = dp(8);
-                appRow.addView(launch, launchParams);
-                appRow.setOnClickListener(v -> {
-                    Intent launchIntent = getPackageManager().getLaunchIntentForPackage(entry.packageName);
-                    if (launchIntent != null) startActivity(launchIntent);
-                    else toast("This app has no launchable activity.");
-                });
-            }
-            if (entries.size() > limit) addMutedLine(installedAppsContainer, "+ " + (entries.size() - limit) + " more apps");
-        } catch (Exception e) {
-            appCountValue.setText("App list unavailable");
-            addMutedLine(installedAppsContainer, "Android did not provide the app list for this profile.");
-        }
-    }
-
-
-    private boolean appRequestsPermission(String packageName, String permission) {
-        try {
-            PackageInfo info = getPackageManager().getPackageInfo(packageName, PackageManager.GET_PERMISSIONS);
-            if (info.requestedPermissions == null) return false;
-            for (String requested : info.requestedPermissions) {
-                if (permission.equals(requested)) return true;
-            }
-        } catch (Exception ignored) { }
-        return false;
-    }
-
-    /**
-     * Returns phone-group runtime permissions declared by this app. Denying the whole
-     * requested group avoids leaving related phone permissions under a confusing,
-     * partially policy-controlled state on Android 8.x.
-     */
-    private List<String> getRequestedPhonePermissions(String packageName) {
-        List<String> permissions = new ArrayList<>();
-        try {
-            PackageInfo info = getPackageManager().getPackageInfo(packageName, PackageManager.GET_PERMISSIONS);
-            if (info.requestedPermissions == null) return permissions;
-            for (String permission : info.requestedPermissions) {
-                boolean isPhoneState = "android.permission.READ_PHONE_STATE".equals(permission);
-                boolean isPhoneGroup = false;
-                try {
-                    PermissionInfo permissionInfo = getPackageManager().getPermissionInfo(permission, 0);
-                    isPhoneGroup = "android.permission-group.PHONE".equals(permissionInfo.group);
-                } catch (PackageManager.NameNotFoundException ignored) { }
-                if ((isPhoneState || isPhoneGroup) && !permissions.contains(permission)) {
-                    permissions.add(permission);
-                }
-            }
-        } catch (Exception ignored) { }
-        return permissions;
-    }
-
-    private boolean isPhonePermissionPolicyBlocked(String packageName) {
-        if (devicePolicyManager == null || !devicePolicyManager.isProfileOwnerApp(getPackageName())) return false;
-        try {
-            ComponentName admin = new ComponentName(this, PrivacyDeviceAdminReceiver.class);
-            return devicePolicyManager.getPermissionGrantState(
-                    admin, packageName, "android.permission.READ_PHONE_STATE")
-                    == DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED;
-        } catch (Exception ignored) {
-            return false;
-        }
-    }
-
-    private String getPhonePermissionStatus(String packageName) {
-        if (isPhonePermissionPolicyBlocked(packageName)) return "Phone permission group: blocked by PrivacyClone";
-        int state = getPackageManager().checkPermission("android.permission.READ_PHONE_STATE", packageName);
-        return state == PackageManager.PERMISSION_GRANTED
-                ? "READ_PHONE_STATE is currently allowed"
-                : "READ_PHONE_STATE is not currently granted";
-    }
-
-    private void confirmBlockPhoneIdentifiers(AppEntry entry) {
-        if (devicePolicyManager == null || !devicePolicyManager.isProfileOwnerApp(getPackageName())) {
-            toast("Set up the managed profile first. This control works only inside the profile PrivacyClone manages.");
             return;
         }
-        new AlertDialog.Builder(this)
-                .setTitle("Block phone and SIM permission?")
-                .setMessage("PrivacyClone will deny this app's requested Android Phone-group permissions, including READ_PHONE_STATE. On Android 8.1, this blocks ordinary access to IMEI/MEID, IMSI and SIM serial through APIs protected by that permission. It does not create replacement identifiers or hide the phone model, Android build, IP address or every hardware signal. Calling, SIM checks or other app features may stop working.")
-                .setNegativeButton("CANCEL", null)
-                .setPositiveButton("BLOCK ACCESS", (dialog, which) -> applyPhonePermissionPolicy(entry.packageName, true))
-                .show();
-    }
-
-    private void restorePhonePermissionControl(String packageName) {
-        new AlertDialog.Builder(this)
-                .setTitle("Return permission control?")
-                .setMessage("This removes PrivacyClone's fixed denial and returns permission management to Android and the user. It does not automatically grant the permission again.")
-                .setNegativeButton("CANCEL", null)
-                .setPositiveButton("RESTORE CONTROL", (dialog, which) -> applyPhonePermissionPolicy(packageName, false))
-                .show();
-    }
-
-    private void applyPhonePermissionPolicy(String packageName, boolean deny) {
-        if (devicePolicyManager == null || !devicePolicyManager.isProfileOwnerApp(getPackageName())) {
-            toast("Profile-owner control is not active.");
+        List<AppEntry> entries = loadCloneEntries();
+        List<AppEntry> active = new ArrayList<>();
+        for (AppEntry entry : entries) {
+            if (VirtualCore.get().isAppInstalledAsUser(entry.userId, entry.packageName)) active.add(entry);
+        }
+        Collections.sort(active, (a, b) -> a.label.toLowerCase(Locale.US).compareTo(b.label.toLowerCase(Locale.US)));
+        appCountValue.setText(active.size() + " virtual clone(s)");
+        if (active.isEmpty()) {
+            addMutedLine(installedAppsContainer, "No clones yet. Clone an installed app or import a single-file APK above.");
             return;
         }
-        List<String> permissions = getRequestedPhonePermissions(packageName);
-        if (!permissions.contains("android.permission.READ_PHONE_STATE")) {
-            toast("This app does not declare READ_PHONE_STATE.");
-            refreshInstalledApps();
-            return;
-        }
-        ComponentName admin = new ComponentName(this, PrivacyDeviceAdminReceiver.class);
-        int grantState = deny
-                ? DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED
-                : DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT;
-        int success = 0;
-        int failed = 0;
-        for (String permission : permissions) {
-            try {
-                if (devicePolicyManager.setPermissionGrantState(admin, packageName, permission, grantState)) success++;
-                else failed++;
-            } catch (Exception e) {
-                failed++;
-            }
-        }
-        refreshInstalledApps();
-        refreshPermissionAudit();
-        if (failed == 0 && success > 0) {
-            toast(deny ? "Phone permission access blocked for this app." : "User control restored. Review the permission in Android settings if needed.");
-        } else if (success > 0) {
-            toast(success + " permission(s) updated; " + failed + " could not be changed.");
-        } else {
-            toast("Android could not change this app's permissions. Check its target version and profile status.");
+        for (AppEntry entry : active) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(10), dp(9), dp(10), dp(10));
+            row.setBackground(round(PANEL_ALT, 8, Color.TRANSPARENT));
+            LinearLayout.LayoutParams rowParams = params(-1, -2);
+            rowParams.bottomMargin = dp(8);
+            installedAppsContainer.addView(row, rowParams);
+            row.addView(text(entry.label, 14, TEXT, true), params(-1, -2));
+            TextView details = text(entry.packageName + "  •  Virtual user " + entry.userId, 10, MUTED, false);
+            LinearLayout.LayoutParams detailsParams = params(-1, -2);
+            detailsParams.topMargin = dp(3);
+            row.addView(details, detailsParams);
+            Button open = button("OPEN CLONE");
+            LinearLayout.LayoutParams openParams = params(-1, dp(40));
+            openParams.topMargin = dp(8);
+            row.addView(open, openParams);
+            open.setOnClickListener(v -> openClone(entry));
+            Button remove = button("REMOVE CLONE");
+            LinearLayout.LayoutParams removeParams = params(-1, dp(38));
+            removeParams.topMargin = dp(6);
+            row.addView(remove, removeParams);
+            remove.setOnClickListener(v -> removeClone(entry));
         }
     }
 
@@ -664,7 +868,7 @@ public final class PrivacyCloneActivity extends Activity {
         // Read only to confirm availability. Never render, persist, or transmit the identifier value.
         String androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
         String status = androidId == null || androidId.length() == 0 ? "Not available" : "Available locally; value not collected";
-        updateMetricByLabel("Profile-scoped Android ID", status, androidId == null ? AMBER : GREEN);
+        updateMetricByLabel("Host Android ID availability", status, androidId == null ? AMBER : GREEN);
     }
 
     private void refreshNetworkStatus() {
@@ -926,11 +1130,26 @@ public final class PrivacyCloneActivity extends Activity {
     private static final class AppEntry {
         final String label;
         final String packageName;
-        final boolean requestsPhoneState;
-        AppEntry(String label, String packageName, boolean requestsPhoneState) {
+        final int userId;
+        AppEntry(String label, String packageName, int userId) {
             this.label = label;
             this.packageName = packageName;
-            this.requestsPhoneState = requestsPhoneState;
+            this.userId = userId;
+        }
+    }
+
+    private static final class CloneTaskResult {
+        final AppEntry entry;
+        final String message;
+        private CloneTaskResult(AppEntry entry, String message) {
+            this.entry = entry;
+            this.message = message;
+        }
+        static CloneTaskResult success(AppEntry entry) {
+            return new CloneTaskResult(entry, "Clone created.");
+        }
+        static CloneTaskResult failure(String message) {
+            return new CloneTaskResult(null, message);
         }
     }
 }
