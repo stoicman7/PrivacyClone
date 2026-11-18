@@ -378,7 +378,7 @@ public final class PrivacyCloneActivity extends Activity {
     }
 
     private void refreshProfileStatus() {
-        boolean ready = VirtualCore.get().isStartup();
+        boolean ready = PrivacyCloneApplication.isReady();
         if (ready) {
             profileStatus.setText("Virtual container initialized");
             profileStatus.setTextColor(GREEN);
@@ -386,11 +386,18 @@ public final class PrivacyCloneActivity extends Activity {
         } else {
             profileStatus.setText("Virtual container unavailable");
             profileStatus.setTextColor(AMBER);
-            profileDetails.setText("The virtual engine did not initialize. Restart PrivacyClone and check the build/device compatibility.");
+            String error = PrivacyCloneApplication.getStartupError();
+            profileDetails.setText(error == null || error.trim().isEmpty()
+                    ? "The virtual engine did not initialize. Restart PrivacyClone and check the build/device compatibility."
+                    : "Engine startup failed: " + error);
         }
     }
 
     private void cloneInstalledApp() {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready. Check the status above and restart the app.");
+            return;
+        }
         String packageName = packageInput.getText().toString().trim();
         if (packageName.isEmpty()) {
             showInstalledAppPicker();
@@ -461,6 +468,10 @@ public final class PrivacyCloneActivity extends Activity {
     }
 
     private void chooseApkFile() {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready. Check the status above and restart the app.");
+            return;
+        }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("application/vnd.android.package-archive");
@@ -512,6 +523,10 @@ public final class PrivacyCloneActivity extends Activity {
     }
 
     private void installVirtualClone(final String apkPath, final String appLabel) {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready.");
+            return;
+        }
         appCountValue.setText("Importing " + appLabel + "…");
         new AsyncTask<Void, Void, CloneTaskResult>() {
             @Override
@@ -581,6 +596,10 @@ public final class PrivacyCloneActivity extends Activity {
     }
 
     private void removeClone(final AppEntry entry) {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready; the clone cannot be removed right now.");
+            return;
+        }
         new AlertDialog.Builder(this)
                 .setTitle("Remove clone?")
                 .setMessage("This removes the virtual user and its local app data for " + entry.label + ". The original app installed on Android is not removed.")
@@ -598,6 +617,10 @@ public final class PrivacyCloneActivity extends Activity {
     }
 
     private void openClone(AppEntry entry) {
+        if (!PrivacyCloneApplication.isReady()) {
+            toast("The virtual container is not ready; the clone cannot be opened.");
+            return;
+        }
         List<String> missing = getMissingClonePermissions(entry);
         if (missing.isEmpty()) {
             launchCloneNow(entry);
@@ -665,6 +688,11 @@ public final class PrivacyCloneActivity extends Activity {
     private void refreshInstalledApps() {
         if (installedAppsContainer == null) return;
         installedAppsContainer.removeAllViews();
+        if (!PrivacyCloneApplication.isReady()) {
+            appCountValue.setText("Virtual container unavailable");
+            addMutedLine(installedAppsContainer, "Cloning is disabled until the virtual engine starts successfully.");
+            return;
+        }
         List<AppEntry> entries = loadCloneEntries();
         List<AppEntry> active = new ArrayList<>();
         for (AppEntry entry : entries) {
