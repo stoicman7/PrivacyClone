@@ -19,6 +19,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.AsyncTask;
+import android.os.Process;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -378,6 +379,10 @@ public final class PrivacyCloneActivity extends Activity {
         addKeyValue(card, "Model", Build.MODEL);
         addKeyValue(card, "Android version", Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")");
         addKeyValue(card, "Build", Build.DISPLAY);
+        addKeyValue(card, "Android app process", Process.is64Bit() ? "64-bit" : "32-bit");
+        addKeyValue(card, "Supported ABIs", Arrays.toString(Build.SUPPORTED_ABIS));
+        File virtualNativeLibrary = new File(getApplicationInfo().nativeLibraryDir, "libva++.so");
+        addKeyValue(card, "VirtualApp native engine", virtualNativeLibrary.isFile() ? "libva++.so present" : "libva++.so MISSING");
         addKeyValue(card, "IMEI / MEID", "Not accessed by PrivacyClone");
         addKeyValue(card, "SIM identifiers / number", "Not accessed by PrivacyClone");
         addKeyValue(card, "Android ID", "Availability only; value is not collected");
@@ -633,39 +638,47 @@ public final class PrivacyCloneActivity extends Activity {
         new AsyncTask<Void, Void, CloneTaskResult>() {
             @Override
             protected CloneTaskResult doInBackground(Void... ignored) {
+                String stage = "connect to the VirtualApp server";
                 try {
                     if (!PrivacyCloneApplication.ensureServerReady()) {
-                        return CloneTaskResult.failure("VirtualApp server unavailable: "
+                        return CloneTaskResult.failure("Server connection failed: "
                                 + String.valueOf(PrivacyCloneApplication.getStartupError()));
                     }
                     VirtualCore core = VirtualCore.get();
                     String packageName = packageNameHint;
                     if (packageName == null) {
+                        stage = "read APK metadata";
                         PackageInfo archive = getPackageManager().getPackageArchiveInfo(apkPath, 0);
                         if (archive == null || archive.packageName == null) {
-                            return CloneTaskResult.failure("The selected APK package information could not be read.");
+                            return CloneTaskResult.failure("APK metadata could not be read.");
                         }
                         packageName = archive.packageName;
                     }
+                    stage = "check whether the package is already imported";
                     InstalledAppInfo existing = core.getInstalledAppInfo(packageName, 0);
                     if (existing == null) {
+                        stage = "parse and import the APK set";
                         InstallResult installed = core.installPackage(
                                 apkPath, InstallStrategy.COMPARE_VERSION | InstallStrategy.SKIP_DEX_OPT);
                         if (installed == null || !installed.isSuccess) {
                             return CloneTaskResult.failure(installed == null || installed.error == null
-                                    ? "The virtual engine could not import this APK set."
-                                    : installed.error);
+                                    ? "The virtual engine rejected this APK set."
+                                    : "APK import failed: " + installed.error);
                         }
                     }
+                    stage = "create an isolated virtual user";
                     VUserInfo user = VUserManager.get().createUser(appLabel + " clone", VUserInfo.FLAG_ADMIN);
-                    if (user == null) return CloneTaskResult.failure("The virtual engine could not create a separate clone space.");
+                    if (user == null) return CloneTaskResult.failure("VirtualApp could not create a clone user.");
+                    stage = "install the imported package into the virtual user";
                     if (!core.installPackageAsUser(user.id, packageName)) {
                         VUserManager.get().removeUser(user.id);
-                        return CloneTaskResult.failure("The app was imported, but could not be installed into its clone space.");
+                        return CloneTaskResult.failure("Package import succeeded, but installPackageAsUser returned false.");
                     }
                     return CloneTaskResult.success(new AppEntry(appLabel, packageName, user.id));
                 } catch (Throwable e) {
-                    return CloneTaskResult.failure("Import failed: " + e.getClass().getSimpleName());
+                    String detail = e.getMessage() == null ? "" : ": " + e.getMessage();
+                    return CloneTaskResult.failure("Failure at [" + stage + "]: "
+                            + e.getClass().getSimpleName() + detail);
                 }
             }
 
@@ -796,7 +809,8 @@ public final class PrivacyCloneActivity extends Activity {
             }
             VActivityManager.get().startActivity(launch, entry.userId);
         } catch (Throwable e) {
-            toast("The clone could not be started on this device.");
+            String detail = e.getMessage() == null ? "" : ": " + e.getMessage();
+            toast("Launch failed: " + e.getClass().getSimpleName() + detail);
         }
     }
 
