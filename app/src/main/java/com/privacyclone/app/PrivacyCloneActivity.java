@@ -413,13 +413,14 @@ public final class PrivacyCloneActivity extends Activity {
                 toast("Android did not expose the installed app's APK path.");
                 return;
             }
-            if (info.applicationInfo.splitSourceDirs != null && info.applicationInfo.splitSourceDirs.length > 0) {
-                toast("This app uses split APKs. This prototype currently imports single-file APKs only.");
+            String label = String.valueOf(info.applicationInfo.loadLabel(getPackageManager()));
+            String importPath = prepareInstalledApkSet(packageName, info);
+            if (importPath == null) {
+                toast("Android exposed the app, but its complete APK set could not be prepared. Check available storage and try again.");
                 return;
             }
-            String label = String.valueOf(info.applicationInfo.loadLabel(getPackageManager()));
             hideKeyboard();
-            installVirtualClone(info.applicationInfo.sourceDir, label);
+            installVirtualClone(importPath, label, packageName);
         } catch (PackageManager.NameNotFoundException e) {
             packageInput.setError("This app is not installed on the phone");
         } catch (Exception e) {
@@ -517,12 +518,76 @@ public final class PrivacyCloneActivity extends Activity {
                 archive.applicationInfo.sourceDir = apkFile.getAbsolutePath();
                 archive.applicationInfo.publicSourceDir = apkFile.getAbsolutePath();
                 String label = String.valueOf(archive.applicationInfo.loadLabel(getPackageManager()));
-                installVirtualClone(apkFile.getAbsolutePath(), label);
+                installVirtualClone(apkFile.getAbsolutePath(), label, null);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
-    private void installVirtualClone(final String apkPath, final String appLabel) {
+    /**
+     * Stage an installed package as a PackageParser cluster: base.apk plus split_<name>.apk.
+     * VirtualApp's PackageParserEx parses the directory and preserves splitCodePaths.
+     */
+    private String prepareInstalledApkSet(String packageName, PackageInfo info) {
+        ApplicationInfo app = info.applicationInfo;
+        if (app == null || app.sourceDir == null) return null;
+
+        String[] splitPaths = app.splitSourceDirs;
+        if (splitPaths == null || splitPaths.length == 0) return app.sourceDir;
+
+        File root = new File(getFilesDir(), "installed-apk-sets");
+        File setDir = new File(root, packageName + "-" + UUID.randomUUID().toString());
+        if (!setDir.mkdirs()) return null;
+
+        try {
+            copyApkFile(new File(app.sourceDir), new File(setDir, "base.apk"));
+            String[] splitNames = info.splitNames;
+            for (int i = 0; i < splitPaths.length; i++) {
+                String splitName = splitNames != null && i < splitNames.length
+                        && splitNames[i] != null && !splitNames[i].trim().isEmpty()
+                        ? splitNames[i] : splitNameFromPath(splitPaths[i]);
+                File destination = new File(setDir, "split_" + splitName + ".apk");
+                copyApkFile(new File(splitPaths[i]), destination);
+            }
+            return setDir.getAbsolutePath();
+        } catch (Exception e) {
+            deleteRecursively(setDir);
+            return null;
+        }
+    }
+
+    private String splitNameFromPath(String path) {
+        String name = new File(path).getName();
+        if (name.endsWith(".apk")) name = name.substring(0, name.length() - 4);
+        if (name.startsWith("split_")) name = name.substring("split_".length());
+        if (name.isEmpty()) throw new IllegalArgumentException("Missing split name");
+        return name;
+    }
+
+    private void copyApkFile(File source, File destination) throws java.io.IOException {
+        if (!source.isFile() || source.length() == 0) {
+            throw new java.io.IOException("APK file is missing: " + source.getName());
+        }
+        try (InputStream input = new java.io.FileInputStream(source);
+             FileOutputStream output = new FileOutputStream(destination)) {
+            byte[] buffer = new byte[16384];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            output.getFD().sync();
+        }
+    }
+
+    private void deleteRecursively(File file) {
+        if (file == null || !file.exists()) return;
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        }
+        file.delete();
+    }
+
+    private void installVirtualClone(final String apkPath, final String appLabel, final String packageNameHint) {
         if (!PrivacyCloneApplication.isReady()) {
             toast("The virtual container is not ready.");
             return;
@@ -533,18 +598,21 @@ public final class PrivacyCloneActivity extends Activity {
             protected CloneTaskResult doInBackground(Void... ignored) {
                 try {
                     VirtualCore core = VirtualCore.get();
-                    PackageInfo archive = getPackageManager().getPackageArchiveInfo(apkPath, 0);
-                    if (archive == null || archive.packageName == null) {
-                        return CloneTaskResult.failure("The APK package information could not be read.");
+                    String packageName = packageNameHint;
+                    if (packageName == null) {
+                        PackageInfo archive = getPackageManager().getPackageArchiveInfo(apkPath, 0);
+                        if (archive == null || archive.packageName == null) {
+                            return CloneTaskResult.failure("The selected APK package information could not be read.");
+                        }
+                        packageName = archive.packageName;
                     }
-                    String packageName = archive.packageName;
                     InstalledAppInfo existing = core.getInstalledAppInfo(packageName, 0);
                     if (existing == null) {
                         InstallResult installed = core.installPackage(
                                 apkPath, InstallStrategy.COMPARE_VERSION | InstallStrategy.SKIP_DEX_OPT);
                         if (installed == null || !installed.isSuccess) {
                             return CloneTaskResult.failure(installed == null || installed.error == null
-                                    ? "The virtual engine could not import this APK."
+                                    ? "The virtual engine could not import this APK set."
                                     : installed.error);
                         }
                     }
