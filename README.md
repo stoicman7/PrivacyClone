@@ -13,7 +13,7 @@ PrivacyClone is a local-first Android app-cloning prototype. It runs cloned apps
 - Local privacy diagnostics and settings dashboard.
 - No analytics or remote telemetry code added by PrivacyClone.
 
-This is an experimental migration branch. It is not yet a verified release. The GitHub Actions build and real-device tests are still required.
+This is an experimental migration branch, not a verified release. The GitHub Actions debug build has passed (run #43, commit 18c4118); real-device tests are still required.
 
 ## Important compatibility limits
 
@@ -41,7 +41,7 @@ The project is built in GitHub Actions; Android Studio is not required on your c
 3. Open the run triggered by the branch push.
 4. Download the **PrivacyClone-debug-apk** artifact if the build succeeds.
 
-The workflow checks out the VirtualXposed submodule recursively and installs Android SDK 28/35 plus NDK 21.4.7075529. It enables AIDL generation, adds the Android Gradle Plugin namespace and NDK pin to the legacy library checkout, and uses Robolectric's Android 8.1 framework JAR as a compile-only source of hidden framework API signatures. The JAR is not packaged into PrivacyClone. These build-time adjustments are applied only to the checked-out submodule during CI; they are not written back to upstream.
+The workflow checks out the VirtualXposed submodule recursively and installs Android SDK 28/35 plus NDK 21.4.7075529. It enables AIDL generation, adds the Android Gradle Plugin namespace and NDK pin to the legacy library checkout, and uses Robolectric's Android 8.1 framework JAR as a compile-only source of hidden framework API signatures. The JAR is not packaged into PrivacyClone. CI also removes the upstream tree's fully commented-out IJobScheduler AIDL file (the matching Java Binder interface is already checked in) and changes one reflection wrapper's generic type to raw List for compiler compatibility. All these build-time patches are applied only to the checked-out submodule during CI; they are not written back to upstream. The successful run uploaded the debug APK artifact; it is a debug build, not a signed release.
 
 ## Device test plan
 
@@ -49,8 +49,8 @@ Use a spare test app/account first. Do not start with a banking, work, or primar
 
 1. Install the APK on the ARM64 Android 8.1 phone.
 2. Open PrivacyClone and check that the virtual container reports initialized.
-3. Enter the package name of a small, non-sensitive app already installed on the phone.
-4. Tap **CLONE INSTALLED APP**.
+3. Leave the package field empty and tap **SELECT OR CLONE INSTALLED APP**.
+4. Choose a small, non-sensitive installed app from the picker.
 5. Confirm that the clone appears in the list and opens.
 6. Sign into a test account and confirm its app data is separate from the original installation.
 7. Close and reopen PrivacyClone; confirm the clone remains listed and still launches.
