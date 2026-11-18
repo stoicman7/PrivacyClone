@@ -164,6 +164,16 @@ jobs:
           daemon_file.write_text(daemon_text)
           PY
 
+      # Preserve the debug signing key between trusted branch builds so
+      # APK updates keep the same certificate instead of invalidating app data.
+      # Pull-request builds deliberately do not restore or write this cache.
+      - name: Restore persistent Android debug signing key
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: privacyclone-debug-keystore-${{ runner.os }}-v1
+
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v6
         with:
