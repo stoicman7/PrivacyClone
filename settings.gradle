@@ -12,6 +12,32 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
+
+        // These old VirtualApp artifacts are no longer published to Maven Central.
+        // Keep the repositories scoped to the exact upstream groups instead of
+        // allowing arbitrary dependencies to resolve from legacy repositories.
+        maven {
+            name = "Verve"
+            url = uri("https://verve.jfrog.io/artifactory/verve-gradle-release/")
+            content {
+                includeGroup("me.weishu")
+            }
+        }
+        maven {
+            name = "AppodealPublic"
+            url = uri("https://artifactory.appodeal.com/appodeal-public/")
+            content {
+                includeGroup("me.weishu.exposed")
+            }
+        }
+        maven {
+            name = "JCenterReadOnlyArchive"
+            url = uri("https://jcenter.bintray.com/")
+            content {
+                includeGroup("me.weishu.exposed")
+                includeModule("me.weishu", "free_reflection")
+            }
+        }
     }
 }
 
