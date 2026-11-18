@@ -18,6 +18,10 @@ It deliberately does not read Android ID, advertising IDs, IMEI/IMSI, serial num
 
 UID values are reported through Android APIs. A virtualization framework can intercept those APIs, so they are not proof of the kernel-level UID or SELinux identity.
 
+## Native library packaging
+
+VirtualApp 0.22 uses `NativeEngine.enableIORedirect()`, which requires `libva++.so` as a real file under Android's `nativeLibraryDir`. The host enables `packaging.jniLibs.useLegacyPackaging = true` so Android extracts native libraries during install. CI inspects the built APK and verifies that `lib/arm64-v8a/libva++.so` and `lib/x86_64/libva++.so` are present and compressed for extraction. If the host still reports the file missing after installing the newly built APK, collect the exact PrivacyClone version and the current startup message; do not disable the preflight check.
+
 ## Build artifacts
 
 The Android CI workflow builds two APKs:
