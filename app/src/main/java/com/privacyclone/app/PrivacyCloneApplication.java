@@ -14,6 +14,7 @@ import com.lody.virtual.client.stub.VASettings;
  */
 public final class PrivacyCloneApplication extends Application {
     private static volatile String startupError;
+    private static volatile boolean initializationComplete;
 
     @Override
     protected void attachBaseContext(Context base) {
@@ -65,9 +66,14 @@ public final class PrivacyCloneApplication extends Application {
                     });
                 }
             });
+            initializationComplete = true;
         } catch (Throwable error) {
             startupError = error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
         }
+    }
+
+    public static boolean isReady() {
+        return initializationComplete && VirtualCore.get().isStartup();
     }
 
     public static String getStartupError() {
