@@ -14,7 +14,7 @@ This branch replaces Android Work Profile / DevicePolicyManager cloning with an 
 
 - VirtualCore startup from PrivacyCloneApplication.
 - VirtualApp library linked as a Gradle subproject.
-- Import an already-installed single-file app by package name.
+- Import an already-installed app by package name, including its base APK and all installed split APKs (configuration and feature splits).
 - Import a single-file APK through Android's document picker.
 - Create a separate VirtualApp user for each clone.
 - Install the imported package into that virtual user.
@@ -28,7 +28,7 @@ This branch replaces Android Work Profile / DevicePolicyManager cloning with an 
 ## Important limitations
 
 - The upstream code is old (2022) and is not guaranteed to support every Android app, Huawei firmware build, Google Play service, Play Integrity check, DRM path, or modern API.
-- The first import flow supports single-file APKs. Split APK applications are rejected by the installed-app import path.
+- Installed-app import stages the base APK and every split APK into an Android PackageParser cluster directory before passing it to VirtualApp. This uses the engine's existing splitCodePaths support. The manual document-picker flow still accepts one standalone APK; selecting only one member of a split set is not sufficient.
 - VirtualApp's manifest declares a large permission superset, including Internet, location, contacts, camera, microphone, phone, SMS, and storage permissions. These declarations are merged into the host APK to support hosted apps.
 - Runtime permissions requested by a clone are requested for PrivacyClone itself. They may be shared across all clones and are not individually isolated.
 - Some special permissions and app-specific background services are not covered by the current permission bridge.
@@ -55,6 +55,7 @@ VirtualXposed's upstream repository identifies GPL-3.0 and its README explicitly
 - [x] Work Profile implementation removed from the launcher flow and app manifest.
 - [x] VirtualApp Gradle module linked and initialized.
 - [x] Clone/import/list/launch/remove flows implemented.
+- [x] Installed-app import stages complete split APK sets (base + configuration/feature splits) for VirtualApp's PackageParser cluster parser.
 - [x] CI updated to fetch the submodule and native NDK.
 - [x] GitHub Actions debug build verified successfully (run #43, commit 18c4118; artifact uploaded).
 - [ ] Install and test on the actual ARM64 Android 8.1 Huawei phone.
