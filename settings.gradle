@@ -52,3 +52,4 @@ rootProject.name = "PrivacyClone"
 include(":app")
 include(":virtualapp")
 project(":virtualapp").projectDir = file("vendor/VirtualXposed/VirtualApp/lib")
+include(":probe")
