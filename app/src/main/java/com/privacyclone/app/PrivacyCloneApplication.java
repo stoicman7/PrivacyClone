@@ -3,6 +3,10 @@ package com.privacyclone.app;
 import android.app.Application;
 import android.content.Context;
 import android.os.Build;
+import android.os.Process;
+
+import java.io.File;
+import java.util.Arrays;
 
 import com.lody.virtual.client.NativeEngine;
 import com.lody.virtual.client.core.VirtualCore;
@@ -24,6 +28,7 @@ public final class PrivacyCloneApplication extends Application {
     @Override
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
+        if (!isSupportedNativeRuntime(base)) return;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 NativeEngine.disableJit(Build.VERSION.SDK_INT);
@@ -34,6 +39,43 @@ public final class PrivacyCloneApplication extends Application {
         } catch (Throwable error) {
             startupError = describe(error);
         }
+    }
+
+    /**
+     * This VirtualApp build packages only 64-bit native ABIs (arm64-v8a and x86_64).
+     * Fail clearly before loading native engine code on unsupported 32-bit runtimes.
+     */
+    private static boolean isSupportedNativeRuntime(Context base) {
+        String[] abis = Build.SUPPORTED_ABIS;
+        boolean hasSupportedAbi = false;
+        if (abis != null) {
+            for (String abi : abis) {
+                if ("arm64-v8a".equals(abi) || "x86_64".equals(abi)) {
+                    hasSupportedAbi = true;
+                    break;
+                }
+            }
+        }
+
+        if (!Process.is64Bit() || !hasSupportedAbi) {
+            startupError = "Unsupported native runtime. This build includes arm64-v8a and x86_64 only; "
+                    + "process bitness is " + (Process.is64Bit() ? "64-bit" : "32-bit")
+                    + " and Android reports ABIs " + Arrays.toString(abis) + ".";
+            initializationComplete = false;
+            startupPending = false;
+            return false;
+        }
+
+        String nativeDirectory = base.getApplicationInfo().nativeLibraryDir;
+        File nativeLibrary = new File(nativeDirectory, "libva++.so");
+        if (!nativeLibrary.isFile()) {
+            startupError = "VirtualApp native library libva++.so is missing from "
+                    + nativeDirectory + ". Rebuild and inspect the APK's packaged native libraries.";
+            initializationComplete = false;
+            startupPending = false;
+            return false;
+        }
+        return true;
     }
 
     @Override
