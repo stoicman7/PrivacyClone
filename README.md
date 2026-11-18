@@ -11,6 +11,7 @@ PrivacyClone is a local-first Android app-cloning prototype. It runs cloned apps
 - Open a clone from PrivacyClone.
 - Remove a clone and its virtual-user data without uninstalling the original app from Android.
 - Local privacy diagnostics and settings dashboard.
+- A separate, network-free Virtualization Probe APK for comparing normal and virtual app contexts.
 - No analytics or remote telemetry code added by PrivacyClone.
 
 This is an experimental migration branch, not a verified release. The GitHub Actions debug build has passed (run #43, commit 18c4118); real-device tests are still required.
@@ -18,8 +19,8 @@ This is an experimental migration branch, not a verified release. The GitHub Act
 ## Important compatibility limits
 
 - The pinned VirtualApp/VirtualXposed source is version 0.22.0 from 2022. Its upstream README describes support through Android 10; Android 8.1 is within that stated range, but this does not guarantee compatibility with every app or Huawei firmware.
-- The native library in this source build declares arm64-v8a and x86_64. A 32-bit-only ARM phone is not supported by this build. Confirm that the target phone is ARM64.
-- This first version accepts single-file APKs. Apps installed as multiple split APK files are rejected by the installed-app import path.
+- The native library in this source build declares arm64-v8a and x86_64. A 32-bit-only runtime is not supported; the host checks process bitness, ABI support and the packaged native library before starting the engine.
+- Installed-app import stages the base APK and installed split APKs together. Manual document-picker import accepts one standalone APK file.
 - Apps that depend on Google Play services, Play Integrity, DRM, vendor frameworks, special native code, or newer Android APIs may fail to install or launch.
 - A virtual user is not an Android OS user. It does not create a separate kernel UID, SELinux domain, hardware device, or network connection. Treat this as an app-data container, not a security boundary against a hostile app.
 - Before launching a clone, PrivacyClone can request dangerous runtime permissions declared by that app. Android grants these to the PrivacyClone host package; they are not isolated per clone in this prototype and may be shared by other clones. Special permissions and app-specific service behavior are not fully mediated. The current prototype does not promise per-clone runtime-permission isolation, device-ID spoofing, IP separation, or undetectability. Cloned apps can still identify the physical device and may detect virtualization.
@@ -39,9 +40,9 @@ The project is built in GitHub Actions; Android Studio is not required on your c
 1. Open the virtual-container-migration branch.
 2. Open **Actions** and choose **Android CI**.
 3. Open the run triggered by the branch push.
-4. Download the **PrivacyClone-debug-apk** artifact if the build succeeds.
+4. Download both **PrivacyClone-debug-apk** and **Virtualization-Probe-debug-apk** if the build succeeds. The second APK is a local-only test app; use it to compare normal and virtual execution.
 
-The workflow checks out the VirtualXposed submodule recursively and installs Android SDK 28/35 plus NDK 21.4.7075529. It enables AIDL generation, adds the Android Gradle Plugin namespace and NDK pin to the legacy library checkout, and uses Robolectric's Android 8.1 framework JAR as a compile-only source of hidden framework API signatures. The JAR is not packaged into PrivacyClone. CI also removes the upstream tree's fully commented-out IJobScheduler AIDL file (the matching Java Binder interface is already checked in) and changes one reflection wrapper's generic type to raw List for compiler compatibility. All these build-time patches are applied only to the checked-out submodule during CI; they are not written back to upstream. The successful run uploaded the debug APK artifact; it is a debug build, not a signed release.
+The workflow builds both the host and the independent probe APK. Follow [VIRTUALIZATION_DIAGNOSTICS.md](VIRTUALIZATION_DIAGNOSTICS.md) to compare a normal probe installation with its clone. The workflow checks out the VirtualXposed submodule recursively and installs Android SDK 28/35 plus NDK 21.4.7075529. It enables AIDL generation, adds the Android Gradle Plugin namespace and NDK pin to the legacy library checkout, and uses Robolectric's Android 8.1 framework JAR as a compile-only source of hidden framework API signatures. The JAR is not packaged into PrivacyClone. CI also removes the upstream tree's fully commented-out IJobScheduler AIDL file (the matching Java Binder interface is already checked in) and changes one reflection wrapper's generic type to raw List for compiler compatibility. All these build-time patches are applied only to the checked-out submodule during CI; they are not written back to upstream. The successful run uploaded the debug APK artifact; it is a debug build, not a signed release.
 
 ## Device test plan
 
