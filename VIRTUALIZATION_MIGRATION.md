@@ -37,6 +37,10 @@ The GitHub Actions preparation step now patches the upstream `DaemonService` in 
 
 This is a targeted compatibility patch to the pinned upstream source. The submodule commit itself is not altered; the patch is applied by the versioned CI workflow. The app's diagnostics show actual process bitness, supported ABIs, and whether the packaged `libva++.so` is present. Startup now stops with a clear error if the process is 32-bit, the device has no supported 64-bit ABI, or the native library is missing. Clone failures report the stage and exception message to make remaining device-specific problems diagnosable.
 
+## Native library extraction requirement
+
+The upstream `Android.mk` builds the native module `va++`, which is packaged as `libva++.so`. VirtualApp's `NativeEngine.enableIORedirect()` constructs a filesystem path under `ApplicationInfo.nativeLibraryDir` and requires the `.so` file to exist there. With modern Android Gradle Plugin defaults and `minSdk 26`, native libraries can be stored uncompressed and page-aligned inside the APK; Android can load them directly from the APK without extracting a copy into `nativeLibraryDir`. That default is incompatible with this VirtualApp file-path requirement even though the `.so` is present in the APK. The host app therefore sets `packaging.jniLibs.useLegacyPackaging = true`, causing the libraries to be compressed in the APK and extracted on installation. CI verifies that the ARM64 and x86_64 `libva++.so` entries exist and are DEFLATED; the build fails if either is missing or stored uncompressed.
+
 A separate network-free Virtualization Probe module is built by CI. It compares app-visible paths, process/package UID values, process bitness, Google components, WebView provider and hardware-feature availability between normal and virtual runs.
 
 ## Important limitations
